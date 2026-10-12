@@ -138,12 +138,14 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
       provider = 'twelvedata';
       // The authenticated request URL and provider error body never reach logs or API errors.
       const pair = `${spec.base}/${spec.quote}`;
-      const query = new URLSearchParams({ symbol: pair, apikey: fxApiKey });
+      const query = new URLSearchParams({ symbol: pair, interval: '1min', timezone: 'UTC', apikey: fxApiKey });
       const payload = await json(`https://api.twelvedata.com/quote?${query}`, signal);
       if (!payload || payload.status === 'error' || (payload.symbol && payload.symbol !== pair)) throw new Error('Invalid intraday reference');
       if (payload.is_market_open === false || payload.is_market_open === 'false' || forexClosed(now())) throw new MarketDataError('The forex market is closed. Demo orders are paused until fresh market quotes resume.');
       price = number(payload.close);
-      asOf = seconds(payload.timestamp);
+      // timestamp identifies the requested interval; last_quote_at identifies
+      // the actual price observation. Never refresh an old quote with our clock.
+      asOf = seconds(Object.hasOwn(payload, 'last_quote_at') ? payload.last_quote_at : payload.timestamp);
     }
     if (!Number.isSafeInteger(asOf) || asOf <= 0 || asOf > Math.floor(now() / 1000) + 60) throw new Error('Invalid quote timestamp');
     const source = SOURCES[provider];

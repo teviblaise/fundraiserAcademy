@@ -325,9 +325,29 @@ test('configured forex uses the exact intraday close and timestamp; API credenti
     assert.equal(request.origin, 'https://api.twelvedata.com');
     assert.equal(request.pathname, '/quote');
     assert.equal(request.searchParams.get('symbol'), 'EUR/USD');
+    assert.equal(request.searchParams.get('interval'), '1min');
+    assert.equal(request.searchParams.get('timezone'), 'UTC');
     assert.equal(request.searchParams.get('apikey'), 'test-private-key');
     assert.equal(JSON.stringify(value).includes('test-private-key'), false);
   } finally { market.close(); }
+});
+
+test('forex freshness uses the last quote observation rather than its interval timestamp', async () => {
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async () => response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND - 600, last_quote_at: SECOND - 20, is_market_open: true }) });
+  try {
+    const quote = await market.getExecutionQuote('EURUSD');
+    assert.equal(quote.price, 1.167385);
+    assert.equal(quote.asOf, SECOND - 20);
+    assert.equal(quote.executable, true);
+  } finally { market.close(); }
+});
+
+test('invalid or stale last-quote timestamps cannot fall back to a fresh interval timestamp', async () => {
+  for (const last_quote_at of [null, 'invalid', SECOND - 121, SECOND + 61]) {
+    const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async () => response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND, last_quote_at, is_market_open: true }) });
+    try { await assert.rejects(market.getExecutionQuote('EURUSD'), error => error.status === 503); }
+    finally { market.close(); }
+  }
 });
 
 test('major and cross forex execution quotes retain the native quote currency instead of treating every price as USD', async () => {

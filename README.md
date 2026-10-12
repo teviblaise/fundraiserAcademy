@@ -146,6 +146,10 @@ they cannot open or close a trade. Client-supplied prices are ignored.
 Daily forex closes and external TradingView charts are display-only. For executable
 quotes for all forex pairs, configure TWELVE_DATA_API_KEY via secure hosting
 settings; the server uses Twelve Data intraday quotes from api.twelvedata.com.
+Requests explicitly select one-minute intervals and UTC. Quote freshness uses
+the provider's `last_quote_at` observation time when present; the interval
+`timestamp` is used only when that field is absent. Invalid or stale observation
+times pause fills rather than borrowing another timestamp or the server clock.
 Crypto execution uses the Coinbase ticker even if historical candles are unavailable.
 
 The account is denominated in USD. Forex prices retain their native quote currency:
