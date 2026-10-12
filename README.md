@@ -3,6 +3,15 @@ We are building a suitable platform for anyone wanting to scale their earning th
 
 ## Website development
 
+The website uses the supplied black, gold, and white FA identity. Wordmarks,
+monograms, favicon, social avatar, and brand board are in `public/`; the About
+page includes asset downloads. Completion certificates use the black logo on
+white with gold accents.
+
+For a temporary Render preview, connect this repository and use its Blueprint
+on the `preview/fundraiser-academy` branch. See DEPLOYMENT.md for the exact steps
+and the difference between free preview storage and persistent live records.
+
 Requires Node.js 24 or newer (uses built-in SQLite). Styling uses Tailwind CSS v4 and its local CLI.
 
 ```sh
@@ -45,6 +54,37 @@ its trading dashboard. Returning users log in at `login.html`. Each user has a
 separate practice account. Registration and trading data persist in SQLite.
 
 ## Backend
+
+### Required trader agreement
+
+After a server-confirmed assessment pass, the dashboard and certificates page
+show the required next step at `contract.html`. Returning passed challengers
+who have not signed are directed there after login. Until the company supplies
+an agreement, the page shows **Agreement pending** and signing is unavailable.
+
+An operator can publish the company-provided PDF or UTF-8 `.txt` file, up to
+10 MB, after the server has initialized its database:
+
+```sh
+npm run contract:publish -- --file /private/trader-agreement.pdf --version v1
+```
+
+Use `--database /path/to/academy.sqlite` for a different database and `--title`
+for the document title. Alternatively set `CONTRACT_FILE`, `CONTRACT_VERSION`,
+and optional `CONTRACT_TITLE` before startup. Keep the source outside `public/`;
+`private/` is ignored by Git. Do not include completed personal contracts in
+release downloads. Published bytes are retained in the private database.
+
+Signing requires a persisted assessment certificate, a typed full legal name,
+explicit consent, and the exact active document ID, version, and SHA-256 hash.
+Certificate nicknames do not set the contract signature. Signature records and
+document versions are immutable and remain after a practice reset. Publishing a
+new version requires a new signature and keeps previous signed agreements
+accessible. Only signed challengers have `canProceedToFundingReview: true`;
+funding approval and account provisioning still need the company's review.
+
+The contract terms have not been supplied. This workflow records typed electronic
+signatures; it does not use an external identity-verification or signing provider.
 
 The Node.js HTTP server serves the website and JSON API. `backend.mjs` implements
 registration/login/logout, salted scrypt password hashes, hashed session tokens,

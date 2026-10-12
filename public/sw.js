@@ -6,7 +6,7 @@ self.addEventListener('push',event=>{
     const clients=await self.clients.matchAll({type:'window',includeUncontrolled:true});
     const visible=clients.filter(client=>client.visibilityState==='visible' && new URL(client.url).pathname==='/dashboard.html');
     if(visible.length){for(const client of visible)client.postMessage({type:'FA_NOTIFICATION',notice:payload});return;}
-    await self.registration.showNotification(payload.title,{body:payload.text,icon:'/logo-mark.svg',badge:'/logo-mark.svg',tag:payload.key,data:{url:'/dashboard.html'}});
+    await self.registration.showNotification(payload.title,{body:payload.text,icon:'/favicon.svg',badge:'/favicon.svg',tag:payload.key,data:{url:'/dashboard.html'}});
   })());
 });
 self.addEventListener('notificationclick',event=>{

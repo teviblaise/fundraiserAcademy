@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify } from './public/simulator.js';
 import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
+import {createContracts,publishContractFile} from './contracts.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -22,6 +23,8 @@ export function createBackend(databasePath) {
   db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());
   const delivery=createDelivery(db,databasePath);
   const certificates=createCertificates(db);
+  const contracts=createContracts(db);
+  if(process.env.CONTRACT_FILE)publishContractFile(contracts,{file:process.env.CONTRACT_FILE,version:process.env.CONTRACT_VERSION,title:process.env.CONTRACT_TITLE});
   const rates = new Map();
   const respond = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(data)); };
   function limit(req, group, max, duration) {
@@ -120,6 +123,17 @@ export function createBackend(databasePath) {
       }
       const current = user(req);
       if (req.method === 'GET' && pathname === '/api/me') { respond(res,200,{user:current}); return; }
+      if(req.method==='GET' && pathname==='/api/contract'){respond(res,200,contracts.status(current.id));return;}
+      if(req.method==='POST' && pathname==='/api/contract/sign'){
+        limit(req,'contract-sign',20,600000);const data=await body(req);
+        respond(res,200,contracts.sign(current.id,data));return;
+      }
+      const contractPath=/^\/api\/contracts\/([a-f0-9-]{36})\/document$/.exec(pathname);
+      if(req.method==='GET' && contractPath){
+        const document=contracts.document(current.id,contractPath[1]);
+        res.writeHead(200,{'Content-Type':document.format==='pdf'?'application/pdf':'text/plain; charset=utf-8','Content-Length':document.content.length,'Content-Disposition':`inline; filename="${document.fileName}"`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'self'",'X-Contract-SHA256':document.hash});
+        res.end(document.content);return;
+      }
       if(req.method==='GET' && pathname==='/api/certificates'){respond(res,200,{certificates:certificates.list(current.id)});return;}
       if(req.method==='GET' && pathname==='/api/certificate-preferences'){respond(res,200,certificates.preferences(current.id));return;}
       if(req.method==='POST' && pathname==='/api/certificate-preferences'){

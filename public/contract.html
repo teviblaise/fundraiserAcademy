@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Review and sign your Fundraiser Academy trader agreement after completing the assessment.">
+  <meta name="theme-color" content="#0b0b0b"><title>Trader agreement | Fundraiser Academy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script><script type="module" src="/contract.js"></script>
+</head>
+<body>
+  <header class="header wrap">
+    <a href="/" class="brand" aria-label="Fundraiser Academy home"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy"></a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="navigation">Menu <span>☰</span></button>
+    <nav id="navigation" aria-label="Main navigation"><a href="/dashboard.html">Trading dashboard</a><a href="/certificates.html">My certificates</a><a href="/contract.html" aria-current="page">Trader agreement</a><a href="/qualification.html">Qualification</a></nav>
+  </header>
+  <main class="wrap py-12" hidden>
+    <p class="eyebrow">YOUR NEXT CHAPTER</p>
+    <h1 class="text-4xl tracking-tight md:text-5xl">Skill assessed.<br><em>Terms agreed.</em></h1>
+    <p class="mb-8 max-w-2xl text-sm text-muted">After passing the trading assessment, every challenger must review and sign the company’s trader agreement before continuing to sponsorship review.</p>
+    <ol class="mb-8 grid gap-3 text-sm md:grid-cols-3" aria-label="Your pathway">
+      <li class="desk-card"><span class="metric-label">01 · Assessment</span><strong id="assessment-step">Checking progress…</strong></li>
+      <li class="desk-card"><span class="metric-label">02 · Required agreement</span><strong id="agreement-step">Awaiting status…</strong></li>
+      <li class="desk-card"><span class="metric-label">03 · Sponsorship review</span><strong id="review-step">Agreement required first</strong></li>
+    </ol>
+    <section class="mb-8 rounded-xl border border-line bg-lime/20 p-6" aria-live="polite">
+      <h2 id="contract-heading" class="mb-3 text-2xl tracking-tight">Loading your agreement status</h2>
+      <p id="contract-status" class="text-sm text-muted" role="status"></p>
+      <a id="assessment-link" class="button mt-5" href="/dashboard.html" hidden>Continue assessment</a>
+      <button id="refresh-contract" class="desk-action mt-5" type="button">Check for updates</button>
+    </section>
+    <section id="contract-document" class="mb-8 desk-card" hidden>
+      <p class="eyebrow mb-3">READ BEFORE YOU SIGN</p>
+      <h2 id="document-title" class="mb-3 text-2xl tracking-tight"></h2>
+      <p id="document-version" class="mb-4 text-xs text-muted"></p>
+      <a id="document-download" class="desk-action mb-5 inline-block" target="_blank" rel="noopener">Open / download agreement</a>
+      <pre id="contract-text" class="max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-paper p-5 font-sans text-sm" hidden></pre>
+      <iframe id="contract-pdf" title="Trader agreement PDF" class="h-[560px] w-full rounded-lg border border-line" hidden></iframe>
+      <p id="document-error" class="mt-3 text-sm" role="status"></p>
+      <p id="document-hash" class="mt-4 break-all text-[10px] text-muted"></p>
+    </section>
+    <section id="signature-panel" class="mb-8 desk-card" hidden>
+      <p class="eyebrow mb-3">REQUIRED TO CONTINUE</p><h2 class="mb-3 text-2xl tracking-tight">Sign your trader agreement</h2>
+      <p class="mb-5 text-sm text-muted">Use your full legal name here. Your certificate nickname is a separate display preference.</p>
+      <form id="contract-sign-form" class="max-w-2xl">
+        <label for="legal-name">Full legal name</label><input id="legal-name" name="legalName" required minlength="1" maxlength="100" autocomplete="name">
+        <label class="mb-5 flex items-start gap-3 text-sm"><input id="contract-consent" type="checkbox" required class="mt-1 w-auto shrink-0"><span id="consent-statement"></span></label>
+        <button id="sign-contract" type="submit" class="button" disabled>Sign agreement</button>
+        <p id="signature-status" class="mt-4 text-sm" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section id="signature-receipt" class="mb-8 desk-card" hidden>
+      <p class="eyebrow mb-3">YOUR SIGNATURE RECORD</p><h2 class="mb-5 text-2xl tracking-tight">Agreement signed</h2>
+      <dl id="receipt-details" class="grid gap-4 text-sm sm:grid-cols-2"></dl>
+      <button id="download-receipt" class="desk-action mt-5" type="button">Download signature record</button>
+    </section>
+    <section id="signature-history" class="mb-8 desk-card" hidden><h2 class="mb-5 text-2xl tracking-tight">Previous signed agreements</h2><div id="history-list" class="space-y-4"></div></section>
+    <p class="mb-8 max-w-3xl text-xs text-muted">Signing is required before sponsorship review. Funding still depends on eligibility, company review, partner-firm rules, and available capacity. Your challenge certificate remains a record of assessment completion.</p>
+    <div class="flex flex-wrap gap-3"><a class="desk-action" href="/dashboard.html">Trading dashboard</a><a class="desk-action" href="/certificates.html">My certificates</a></div>
+  </main>
+  <footer class="wrap"><div class="footer-top"><a class="brand" href="/"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy"></a><p>Your skill. Our backing.</p><div class="flex flex-wrap gap-5 text-xs"><a href="/privacy.html">Privacy</a><a href="/qualification.html">Qualification</a></div></div><p class="risk">Fundraiser Academy sponsors approved third-party prop accounts. Assessment completion and agreement signing do not guarantee funding or profits. Covered trading losses and profit sharing follow the company’s written agreement.</p><div class="footer-bottom"><span>© <span id="year">2026</span> Fundraiser Academy</span><span>Your skill. Our backing.</span></div></footer>
+</body>
+</html>

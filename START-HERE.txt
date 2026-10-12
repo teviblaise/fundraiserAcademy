@@ -17,3 +17,7 @@ private data folder. Email and background push need additional configuration;
 in-page popup notifications work without provider credentials.
 
 See README.md for features and DEPLOYMENT.md for later live hosting.
+
+After passing the assessment, open Trader agreement. Signing is compulsory
+before sponsorship review. The agreement stays pending until the company
+provides its contract. No contract terms are included in this preview.

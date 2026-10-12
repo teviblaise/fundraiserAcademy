@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "start": "node --use-env-proxy server.mjs",
-    "check": "node --check server.mjs && node --check backend.mjs && node --check delivery.mjs && node --check certificates.mjs && node --check public/app.js && node --check public/dashboard.js && node --check public/simulator.js && node --check public/sw.js && node --check public/verify-email.js && node --check public/certificates.js && npm run build",
+    "check": "node --check server.mjs && node --check backend.mjs && node --check delivery.mjs && node --check certificates.mjs && node --check contracts.mjs && node --check public/app.js && node --check public/dashboard.js && node --check public/simulator.js && node --check public/sw.js && node --check public/verify-email.js && node --check public/certificates.js && node --check public/contract.js && node --check public/contract-status.js && npm run build",
     "build": "tailwindcss -i ./src/styles.css -o ./public/styles.css --minify",
     "dev": "tailwindcss -i ./src/styles.css -o ./public/styles.css --watch",
     "prestart": "npm run build",
     "test": "node --test tests/*.test.mjs",
-    "start:prod": "node --use-env-proxy server.mjs"
+    "start:prod": "node --use-env-proxy server.mjs",
+    "contract:publish": "node --use-env-proxy contracts.mjs publish"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",

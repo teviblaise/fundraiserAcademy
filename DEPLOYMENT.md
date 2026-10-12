@@ -10,9 +10,15 @@ start command `npm run start:prod`, and environment variables `NODE_VERSION=24.1
 and `COOKIE_SECURE=true`.
 
 After Render assigns the HTTPS URL, set `APP_ORIGIN` to that exact URL without
-a trailing slash in the service's Environment settings. Registration, simulated
+a trailing slash if using a custom domain. The server automatically uses
+Render's `RENDER_EXTERNAL_URL` for its default public origin. Registration, simulated
 trading, certificates, and popup notifications can be tried without email keys.
 Email requires a verified Resend sender and securely configured provider settings.
+
+The Blueprint explicitly deploys `preview/fundraiser-academy` and checks
+`/healthz` before routing requests to the service. Render supplies the `PORT`;
+the server listens on that port on all interfaces. The build installs the locked
+dependencies and compiles Tailwind, and the runtime starts the Node.js backend.
 
 This free preview uses temporary storage: accounts, certificates, and push keys
 can disappear on restarts or redeploys. Free services may sleep when idle. Use
@@ -22,6 +28,13 @@ when the preview is no longer needed.
 
 The laptop ZIP is in `downloads/fundraiserAcademy-laptop.zip`; it includes the
 website and backend but excludes user databases and credentials.
+
+The agreement page is ready, but no contract has been supplied. When the company
+provides it, publish the PDF or UTF-8 text privately using the command in README.md.
+For services without an interactive shell, set `CONTRACT_FILE` to a private file
+included in the deployment, plus `CONTRACT_VERSION` and optional `CONTRACT_TITLE`.
+Keep personal completed contracts out of Git and out of `public/`. Free preview
+storage cannot preserve signatures reliably; use a persistent disk for real signing.
 
 This app needs a Node.js backend. Static hosting and the VS Code Live Server
 extension cannot run registration, saved trading records, certificates, or delivery.

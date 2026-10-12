@@ -1,4 +1,5 @@
 import { MARKETS, quote, pnl, metrics } from './simulator.js';
+import {showContractNextStep} from './contract-status.js';
 
 const $ = id => document.getElementById(id);
 let account;
@@ -7,9 +8,10 @@ let running = true;
 let pushSubscribed=false;
 let workerRegistration=null;
 let notificationSettings=null;
+let checkedPassedAttempt=null;
 const money = value => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 const price = (symbol, value) => value.toFixed(MARKETS[symbol].decimals);
-const color = value => value < 0 ? 'text-red-700' : 'text-forest';
+const color = value => value < 0 ? 'text-red-400' : 'text-lime';
 const message = text => { $('dashboard-message').textContent = text; };
 async function api(endpoint, data) {
   const response = await fetch(endpoint, data === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'FundraiserAcademy'}, body:JSON.stringify(data) });
@@ -102,6 +104,7 @@ function renderTables() {
 }
 
 function render() {
+  if(account.locked==='Profit target achieved' && checkedPassedAttempt!==account.notificationEpoch){checkedPassedAttempt=account.notificationEpoch;void showContractNextStep($('contract-next-step'));}
   const m = metrics(account); const q = quote(account, selected); const market = MARKETS[selected];
   for (const [id, value] of [['balance', account.balance], ['equity', m.equity], ['net', m.net], ['free-margin', m.freeMargin]]) $(id).textContent = money(value);
   $('net').className = `metric-value ${color(m.net)}`;
@@ -124,7 +127,7 @@ function render() {
   $('max-drawdown').textContent = `${account.worstDrawdown.toFixed(2)}%`;
   $('submit-order').disabled = Boolean(account.locked);
   $('submit-order').classList.toggle('opacity-50', Boolean(account.locked));
-  for (const button of $('market-tabs').children) { button.setAttribute('aria-pressed', String(button.dataset.symbol === selected)); button.classList.toggle('bg-lime', button.dataset.symbol === selected); }
+  for (const button of $('market-tabs').children) { button.setAttribute('aria-pressed', String(button.dataset.symbol === selected)); button.classList.toggle('bg-lime', button.dataset.symbol === selected); button.classList.toggle('text-black', button.dataset.symbol === selected); }
   $('limits-summary').textContent=`Daily cap: ${account.limits.dailyLoss===null?'academy default':money(account.limits.dailyLoss)} · Trade risk: ${account.limits.maxRisk===null?'not set':money(account.limits.maxRisk)} · ${account.limits.maxPositions} positions`;
   estimate(); renderChart(); renderTables(); renderTools();
 }
@@ -245,6 +248,8 @@ $('enable-notifications').addEventListener('click',async()=>{
 $('disable-push').addEventListener('click',async()=>{try{const subscription=await workerRegistration?.pushManager.getSubscription();if(subscription){notificationSettings=await api('/api/push/unsubscribe',{endpoint:subscription.endpoint});await subscription.unsubscribe();}pushSubscribed=false;displayDeliverySettings();message('Background push disabled on this device.');}catch(error){message(error.message);}});
 $('enable-email').addEventListener('click',async()=>{try{if(notificationSettings.emailVerified){notificationSettings=await api('/api/email/preferences',{enabled:true});message('Email alerts enabled.');}else{notificationSettings=await api('/api/email/request-verification',{});message('Verification email queued. Check your inbox and confirm the link to enable alerts.');}displayDeliverySettings();}catch(error){message(error.message);}});
 $('disable-email').addEventListener('click',async()=>{try{notificationSettings=await api('/api/email/preferences',{enabled:false});displayDeliverySettings();message('Email alerts disabled.');}catch(error){message(error.message);}});
+await showContractNextStep($('contract-next-step'));
+checkedPassedAttempt=account.locked==='Profit target achieved'?account.notificationEpoch:null;
 render();
 setInterval(() => { if(!document.hidden) tick(); },1500);
 setInterval(()=>{if(!document.hidden)void refreshDeliverySettings().catch(()=>{});},15000);

@@ -1,11 +1,13 @@
 services:
   - type: web
     name: fundraiser-academy-preview
+    repo: https://github.com/teviblaise/fundraiserAcademy
+    branch: preview/fundraiser-academy
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start:prod
-    healthCheckPath: /
+    healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
         value: 24.19.0

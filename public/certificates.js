@@ -1,3 +1,4 @@
+import {showContractNextStep} from './contract-status.js';
 const list=document.getElementById('certificate-list');
 const status=document.getElementById('certificate-status');
 let namePreferences;
@@ -14,6 +15,7 @@ try {
   if(response.status===401){location.replace('/login.html');await new Promise(()=>{});}
   if(!response.ok)throw new Error('Could not load your certificates. Please try again.');
   const result=await response.json();document.querySelector('main').hidden=false;
+  await showContractNextStep(document.getElementById('contract-next-step'));
   const preferencesResponse=await fetch('/api/certificate-preferences');if(!preferencesResponse.ok)throw new Error('Could not load certificate name settings.');namePreferences=await preferencesResponse.json();document.getElementById('certificate-mode').value=namePreferences.mode;document.getElementById('certificate-nickname').value=namePreferences.nickname;namePreview();
   if(!result.certificates.length){status.textContent='No certificates yet. Pass the practice challenge over at least 3 trading days with all positions closed to earn your first certificate.';}
   for(const certificate of result.certificates){

@@ -25,6 +25,10 @@ for (const [id, endpoint] of [['interest-form', '/api/register'], ['login-form',
     try {
       const values = Object.fromEntries(new FormData(form));
       await authRequest(endpoint, { name: values.name, email: values.email, password: values.password, market: values.experience, consent: values.consent === 'on' });
+      if(endpoint==='/api/login'){
+        const agreement=await fetch('/api/contract');
+        if(agreement.ok){const progress=await agreement.json();if(progress.assessmentPassed&&progress.status!=='signed'){window.location.assign('/contract.html');return;}}
+      }
       window.location.assign('/dashboard.html');
     } catch (error) { status.textContent = error.message; button.disabled = false; }
   });

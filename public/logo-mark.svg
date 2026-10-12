@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title">
-  <title id="title">Fundraiser Academy monogram</title>
-  <rect width="80" height="80" rx="18" fill="#183c31"/>
-  <path d="M20 57V23h25v8H29v7h12v8H29v11Z" fill="#d5edb2"/>
-  <path d="m41 57 13-29h7l13 29h-9l-2-6H51l-2 6Zm13-14h6l-3-8Z" fill="#fafbf6" transform="translate(-4 0)"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 140" role="img" aria-labelledby="title"><title id="title">Fundraiser Academy FA monogram</title>
+<path d="M18 10h108l-13 19H6Z" fill="#ffffff"/>
+<path d="M18 43h84L88 64H43v60H18Z" fill="#ffffff"/>
+<path d="m135 10 57 114h-27l-33-75-44 75H62Z" fill="#ffd700"/>
+<path d="M106 100h11v24h-11Zm17-10h11v34h-11Zm17-11h11v45h-11Z" fill="#ffd700"/>
 </svg>

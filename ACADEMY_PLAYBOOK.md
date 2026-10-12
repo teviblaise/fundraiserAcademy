@@ -8,9 +8,12 @@
 
 **One-line pitch:** Demonstrate your trading ability, qualify for a sponsored third-party prop account with no participation fee, and share profits while Fundraiser Academy bears covered trading losses.
 
-**Identity:** Forest green (#183c31), soft lime (#d5edb2), cream (#fafbf6).
-The FA monogram represents the academy and its backing. Use `public/logo.svg`
-for the full wordmark and `public/logo-mark.svg` for avatars and the favicon.
+**Identity:** Black (#0b0b0b), gold (#ffd700), white (#ffffff).
+The supplied angular FA monogram and rising bars represent trading and growth.
+Use `public/logo.svg` for the white/gold wordmark on dark backgrounds,
+`public/logo-dark.svg` for the black wordmark on white documents,
+`public/logo-mark.svg` for the standalone mark, and `public/favicon.svg`
+for the browser icon. The current brand board and social avatar are in `public/assets/`.
 Keep generous clear space. Avoid stretching or placing the mark on busy backgrounds.
 
 **Voice:** Clear, confident, realistic. Lead with existing trading skill and access
@@ -99,4 +102,4 @@ do not approve funding. Notification email opt-in verification is implemented; p
 account deletion/retention, production operations, and payout integration remain
 unfinished. Prices are synthetic and do not establish real-market ability.
 
-Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
+Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. Until the document is supplied, the agreement remains pending. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
