@@ -1,4 +1,4 @@
-import { MARKETS, quote, quoteIsExecutable, pnl, metrics } from './simulator.js';
+import { MARKETS, quote, quoteIsExecutable, marketDependencies, rawQuoteFresh, pnl, metrics } from './simulator.js';
 import {showContractNextStep} from './contract-status.js';
 import {createMarketReference} from './market-reference.js';
 
@@ -35,10 +35,17 @@ try {
 }
 const marketReference=createMarketReference($('real-market-reference'),selected,traderId);
 $('sign-out').addEventListener('click', async () => { try { const subscription=await workerRegistration?.pushManager.getSubscription(); await api('/api/logout', {endpoint:subscription?.endpoint}); if(subscription)await subscription.unsubscribe(); window.location.assign('/login.html'); } catch(error) { message(error.message); } });
-for (const [symbol, market] of Object.entries(MARKETS)) {
-  const option = document.createElement('option'); option.value = symbol; option.textContent = market.label; $('symbol').append(option);
-  const button = document.createElement('button'); button.type = 'button'; button.textContent = market.label; button.dataset.symbol = symbol; button.className = 'desk-action'; button.addEventListener('click', () => selectMarket(symbol)); $('market-tabs').append(button);
-  const alertOption=option.cloneNode(true); $('alert-symbol').append(alertOption);
+for (const category of [...new Set(Object.values(MARKETS).map(market => market.category))]) {
+  const markets = Object.entries(MARKETS).filter(([, market]) => market.category === category);
+  const options = document.createElement('optgroup'); options.label = category;
+  const alertOptions = document.createElement('optgroup'); alertOptions.label = category;
+  const group = document.createElement('div'); group.className = 'flex w-full flex-wrap gap-2'; group.setAttribute('role', 'group'); group.setAttribute('aria-label', `${category} markets`);
+  const heading = document.createElement('p'); heading.className = 'w-full text-xs text-muted'; heading.textContent = `${category} · ${markets.length} markets`; group.append(heading);
+  for (const [symbol, market] of markets) {
+    const option = document.createElement('option'); option.value = symbol; option.textContent = market.label; options.append(option); alertOptions.append(option.cloneNode(true));
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = market.label; button.dataset.symbol = symbol; button.className = 'desk-action'; button.addEventListener('click', () => selectMarket(symbol)); group.append(button);
+  }
+  $('symbol').append(options); $('alert-symbol').append(alertOptions); $('market-tabs').append(group);
 }
 let editingPosition=null;
 const seenNotifications=new Set(account.notifications.map(n=>`${account.notificationEpoch}:${n.id}`));
@@ -59,12 +66,18 @@ function selectMarket(symbol) {
   selected = symbol; $('symbol').value = symbol;
   marketReference.selectSymbol(symbol);
   $('quantity').value = MARKETS[symbol].category === 'Forex' ? '10000' : symbol === 'BTCUSD' ? '0.01' : '0.1';
-  $('stop-loss').value = ''; $('take-profit').value = ''; render();
+  $('limit-price').value = ''; $('stop-loss').value = ''; $('take-profit').value = ''; render();
   void tick();
 }
 
 function executionReady(symbol = selected) {
   return !account.migrationRequired && quoteIsExecutable(account, symbol);
+}
+function unavailableReference(symbol) {
+  const stale = marketDependencies(symbol).filter(dependency => !rawQuoteFresh(account, dependency));
+  const conversion = stale.find(dependency => dependency !== symbol);
+  if (conversion) return `The ${conversion} reference needed to convert ${MARKETS[symbol].quoteCurrency} to USD is unavailable or stale. ${account.prices[conversion]?.error || ''}`.trim();
+  return account.prices[symbol]?.error || 'A fresh verified quote and any required USD conversion are unavailable.';
 }
 
 function renderExecutionState(m = metrics(account)) {
@@ -79,8 +92,8 @@ function renderExecutionState(m = metrics(account)) {
   $('execution-quote-status').textContent = account.migrationRequired
     ? 'Start a reference-priced attempt with Reset demo. Your previous attempt is preserved in the server audit record.'
     : ready
-      ? `${q.source} · Quote ${quoteTime(q.asOf * 1000)} · Retrieved ${quoteTime(q.fetchedAt)}.`
-      : `${q.source ? `Last source: ${q.source} · Quote ${quoteTime(q.asOf * 1000)}. ` : ''}${account.prices[selected]?.error || 'A fresh verified quote is unavailable.'} Orders, closes and protection edits wait for a fresh reference. Refresh reference prices or choose another market.`;
+      ? `${q.source} · Quote ${quoteTime(q.asOf * 1000)} · Retrieved ${quoteTime(q.fetchedAt)}.${q.conversionQuote ? ` USD conversion: ${q.conversionQuote.symbol} · ${quoteTime(q.conversionQuote.asOf * 1000)}.` : ''}`
+      : `${q.source ? `Last source: ${q.source} · Quote ${quoteTime(q.asOf * 1000)}. ` : ''}${unavailableReference(selected)} Orders, closes and protection edits wait for fresh references. Refresh reference prices or choose another market.`;
   const blocked = orderSubmitting || Boolean(account.locked) || !ready || m.executionReady === false;
   $('submit-order').disabled = blocked;
   $('submit-order').classList.toggle('opacity-50', blocked);
@@ -90,7 +103,7 @@ function renderExecutionState(m = metrics(account)) {
     const position = account.positions.find(p => p.id === editingPosition);
     const canEdit = position && executionReady(position.symbol);
     $('protection-form').querySelector('button[type="submit"]').disabled = !canEdit;
-    if (!canEdit) $('protection-status').textContent = 'Protection edits are paused until a fresh reference quote is available.';
+    if (!canEdit) $('protection-status').textContent = 'Protection edits are paused until this position has a fresh reference price and any required USD conversion.';
   }
 }
 
@@ -98,13 +111,14 @@ function estimate() {
   const quantity = Number($('quantity').value);
   const market = MARKETS[selected];
   if (!executionReady() || metrics(account).executionReady === false) {
-    $('order-estimate').textContent = 'A fresh verified reference is needed before margin can be checked and an order can fill.';
+    $('order-estimate').textContent = 'Fresh reference prices and any required USD conversions are needed before margin can be checked and an order can fill.';
     return;
   }
   const q = quote(account, selected);
+  const usdRate = market.quoteCurrency === 'USD' ? 1 : q.usdRate;
   const entry = $('side').value === 'buy' ? q.ask : q.bid;
   const plannedEntry = $('order-type').value === 'limit' && Number($('limit-price').value) > 0 ? Number($('limit-price').value) : entry;
-  $('order-estimate').textContent = Number.isFinite(quantity) && quantity > 0 ? `Estimated margin: ${money(plannedEntry * quantity / market.leverage)} · No added spread · ${market.leverage}:1 demo leverage` : 'Enter a positive quantity.';
+  $('order-estimate').textContent = Number.isFinite(quantity) && quantity > 0 ? `Estimated margin: ${money(plannedEntry * quantity * usdRate / market.leverage)} · No added spread · ${market.leverage}:1 demo leverage` : 'Enter a positive quantity.';
 }
 
 function row(cells) {
@@ -127,7 +141,7 @@ function renderTables() {
     const edit=document.createElement('button'); edit.className='desk-action'; edit.textContent='Edit SL/TP'; edit.dataset.executionSymbol=position.symbol; edit.disabled=!executionReady(position.symbol);
     edit.addEventListener('click',()=>{ editingPosition=position.id; $('protection-title').textContent=`${position.symbol} #${position.id} protection`; $('edit-stop').value=position.stopLoss??''; $('edit-target').value=position.takeProfit??''; $('protection-status').textContent=''; $('protection-dialog').showModal(); renderExecutionState(); });
     actions.append(edit,close);
-    const floating = account.migrationRequired || !Number.isFinite(account.prices[position.symbol]?.mid) ? null : pnl(account, position);
+    const floating = account.migrationRequired ? null : pnl(account, position);
     const floatingNode = resultNode(floating);
     if (!executionReady(position.symbol) && Number.isFinite(floating)) { floatingNode.append(' · last reference'); floatingNode.className = 'text-muted'; }
     $('positions').append(row([`${position.symbol} · ${position.side.toUpperCase()}`, position.quantity, price(position.symbol, position.entry), `${position.stopLoss === null ? '—' : price(position.symbol, position.stopLoss)} / ${position.takeProfit === null ? '—' : price(position.symbol, position.takeProfit)}`, floatingNode, actions]));
@@ -146,6 +160,9 @@ function render() {
   $('floating').textContent = account.migrationRequired ? 'Previous attempt · read only' : !valued ? 'Waiting for reference valuations' : `${money(m.floating)} floating P&L${m.executionReady === false ? ' · last reference, awaiting fresh prices' : ''}`; $('floating').className = `text-xs ${m.executionReady === false ? 'text-muted' : color(valued ? m.floating : null)}`;
   $('used-margin').textContent = `${money(m.margin)} margin used`;
   $('quantity-label').textContent = `Quantity (${market.unit})`;
+  $('ticket-price-unit').textContent = `Prices in ${market.quoteCurrency} per ${market.baseCurrency}`;
+  const conversionNote = $('quote-currency-note'); conversionNote.hidden = market.quoteCurrency === 'USD';
+  conversionNote.textContent = `Prices are in ${market.quoteCurrency}; margin, profit or loss, and risk limits are converted to USD using a fresh reference rate.`;
   $('risk-status').textContent = account.locked === 'Profit target achieved' ? 'Practice challenge passed' : account.locked ? `${account.locked} — locked` : 'Challenge in progress';
   $('target-meter').value = Math.min(100, Math.max(0, (account.balance - account.initial) / (account.initial * .1) * 100));
   $('target-risk').textContent = `${money(account.balance - account.initial)} / ${money(account.initial * .1)} realized profit · ${account.tradingDays.length}/3 trading days · close all positions to pass`;
@@ -168,7 +185,7 @@ function render() {
     $('reset-dialog').querySelector('p').textContent = 'This restarts your practice account. Previous attempts remain in the server audit record. Export the current journal first if you want a copy.';
     if (m.executionReady === false) $('risk-status').textContent = `${account.locked ? account.locked + ' · ' : ''}Risk checks awaiting fresh references`;
   }
-  for (const button of $('market-tabs').children) { button.setAttribute('aria-pressed', String(button.dataset.symbol === selected)); button.classList.toggle('bg-lime', button.dataset.symbol === selected); button.classList.toggle('text-black', button.dataset.symbol === selected); }
+  for (const button of $('market-tabs').querySelectorAll('[data-symbol]')) { button.setAttribute('aria-pressed', String(button.dataset.symbol === selected)); button.classList.toggle('bg-lime', button.dataset.symbol === selected); button.classList.toggle('text-black', button.dataset.symbol === selected); }
   $('limits-summary').textContent=`Daily cap: ${account.limits.dailyLoss===null?'academy default':money(account.limits.dailyLoss)} · Trade risk: ${account.limits.maxRisk===null?'not set':money(account.limits.maxRisk)} · ${account.limits.maxPositions} positions`;
   estimate(); renderTables(); renderExecutionState(m); renderTools();
 }
@@ -223,7 +240,7 @@ function renderTools() {
   for(const order of account.pending) {
     const cancel=document.createElement('button'); cancel.className='desk-action'; cancel.textContent='Cancel order';
     cancel.addEventListener('click',async()=>{try{await toolAction('/api/orders/cancel',{id:order.id},'Limit order cancelled.');}catch(e){message(e.message);}});
-    $('pending-orders').append(row([`${order.symbol} · ${order.side.toUpperCase()}`,order.quantity,price(order.symbol,order.limitPrice),`${order.stopLoss??'—'} / ${order.takeProfit??'—'}`,cancel]));
+    $('pending-orders').append(row([`${order.symbol} · ${order.side.toUpperCase()}`,order.quantity,price(order.symbol,order.limitPrice),`${order.stopLoss === null ? '—' : price(order.symbol,order.stopLoss)} / ${order.takeProfit === null ? '—' : price(order.symbol,order.takeProfit)}`,cancel]));
   }
   $('alerts-list').replaceChildren();
   if(!account.alerts.length) { const p=document.createElement('p'); p.className='text-xs text-muted'; p.textContent='No price alerts yet.'; $('alerts-list').append(p); }

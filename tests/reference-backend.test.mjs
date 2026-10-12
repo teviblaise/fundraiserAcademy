@@ -65,6 +65,50 @@ test('logged-out paper positions continue to receive protective reference-price 
   }finally{db?.close();await h.close();}
 });
 
+test('cross-pair HTTP fills fetch fresh conversion references and settle profit in USD',async()=>{
+  const h=await harness();
+  try{
+    const open=await h.request('/api/trades',{symbol:'EURJPY',side:'buy',quantity:1000,stopLoss:160,price:1,usdRate:1},h.cookie);
+    assert.equal(open.status,200);
+    const position=open.body.account.positions[0];
+    assert.equal(position.entry,162.75);
+    assert.equal(position.entryQuote.usdRate,1/150);
+    assert.equal(position.entryQuote.conversionQuote.symbol,'USDJPY');
+    assert.equal(position.marginUsd,162.75*1000/150/30);
+    assert.deepEqual(new Set(h.reference.calls),new Set(['EURJPY','USDJPY']));
+
+    h.reference.failures.add('USDJPY');h.reference.prices.EURJPY=159;
+    const paused=await h.request('/api/account?symbol=EURJPY',undefined,h.cookie);
+    assert.equal(paused.status,200);assert.equal(paused.body.account.positions.length,1);
+    assert.equal(paused.body.account.prices.EURJPY.mid,159);
+    assert.equal(paused.body.account.prices.USDJPY.available,false);
+    assert.equal((await h.request('/api/trades/close',{id:position.id},h.cookie)).status,503);
+    assert.equal((await h.request('/api/trades',{symbol:'BTCUSD',side:'buy',quantity:.01},h.cookie)).status,503);
+
+    h.reference.failures.delete('USDJPY');h.reference.prices.USDJPY=151;
+    const recovered=await h.request('/api/account?symbol=EURJPY',undefined,h.cookie);
+    assert.equal(recovered.body.account.positions.length,0);
+    const result=recovered.body.account.history[0];
+    assert.equal(result.reason,'Stop loss');assert.equal(result.exit,159);
+    assert.equal(result.profit,(159-162.75)*1000/151);
+    assert.equal(result.exitQuote.conversionQuote.price,151);
+    assert.equal(recovered.body.account.balance,10000+result.profit);
+
+    h.reference.prices.EURGBP=.85;h.reference.prices.GBPUSD=1.25;
+    h.reference.calls.length=0;
+    const sterling=await h.request('/api/trades',{symbol:'EURGBP',side:'sell',quantity:1000},h.cookie);
+    assert.equal(sterling.status,200);
+    assert.deepEqual(new Set(h.reference.calls),new Set(['EURGBP','GBPUSD']));
+    assert.equal(sterling.body.account.positions[0].entryQuote.usdRate,1.25);
+    h.reference.prices.EURGBP=.84;h.reference.prices.GBPUSD=1.3;
+    const closed=await h.request('/api/trades/close',{id:sterling.body.account.positions[0].id},h.cookie);
+    assert.equal(closed.status,200);
+    assert.ok(Math.abs(closed.body.account.history[0].profit-13)<1e-10);
+    assert.equal(closed.body.account.history[0].exitQuote.conversionQuote.symbol,'GBPUSD');
+    assert.equal(closed.body.account.history[0].exitQuote.conversionQuote.price,1.3);
+  }finally{await h.close();}
+});
+
 test('polls and orders serialize behind provider awaits, preventing lost fills',async()=>{
   const h=await harness();
   try{

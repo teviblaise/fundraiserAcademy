@@ -13,6 +13,8 @@ includes a Node.js backend for registration, trading, and certificates.
 
 Register a new account to try the trading dashboard. Crypto demo fills use fresh
 Coinbase reference prices; intraday forex fills need a configured Twelve Data key.
+Ten forex pairs are available, including yen and sterling crosses. Their profit,
+margin, and risk are valued in USD using fresh conversion references.
 Missing or stale quotes pause trading. Earlier demo accounts can start a new
 reference-priced attempt using Reset demo, with previous records preserved. Cloud-instance users
 and secrets are excluded from this export. Your laptop creates its own

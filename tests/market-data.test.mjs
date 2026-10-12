@@ -221,7 +221,7 @@ test('execution quotes use the exact last-trade reference without fetching candl
   const market = createMarketData({ now: () => NOW, fetchFn: async url => { calls.push(url); assert.match(url, /\/products\/BTC-USD\/ticker$/); return response(ticker); } });
   try {
     const value = await market.getExecutionQuote('BTCUSD');
-    assert.deepEqual(value, { symbol: 'BTCUSD', price: 111.25, asOf: SECOND - 2, fetchedAt: NOW, source: 'Coinbase Exchange', sourceUrl: 'https://www.coinbase.com/advanced-trade', executable: true });
+    assert.deepEqual(value, { symbol: 'BTCUSD', baseCurrency: 'BTC', quoteCurrency: 'USD', price: 111.25, asOf: SECOND - 2, fetchedAt: NOW, source: 'Coinbase Exchange', sourceUrl: 'https://www.coinbase.com/advanced-trade', executable: true });
     value.price = 0;
     assert.equal((await market.getExecutionQuote('BTCUSD')).price, 111.25);
     assert.equal(calls.length, 1);
@@ -319,7 +319,7 @@ test('configured forex uses the exact intraday close and timestamp; API credenti
   const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async url => { calls.push(url); return response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND - 20, is_market_open: true }); } });
   try {
     const value = await market.getExecutionQuote('EURUSD');
-    assert.deepEqual(value, { symbol: 'EURUSD', price: 1.167385, asOf: SECOND - 20, fetchedAt: NOW, source: 'Twelve Data', sourceUrl: 'https://twelvedata.com/', executable: true });
+    assert.deepEqual(value, { symbol: 'EURUSD', baseCurrency: 'EUR', quoteCurrency: 'USD', price: 1.167385, asOf: SECOND - 20, fetchedAt: NOW, source: 'Twelve Data', sourceUrl: 'https://twelvedata.com/', executable: true });
     assert.equal(calls.length, 1);
     const request = new URL(calls[0]);
     assert.equal(request.origin, 'https://api.twelvedata.com');
@@ -328,6 +328,93 @@ test('configured forex uses the exact intraday close and timestamp; API credenti
     assert.equal(request.searchParams.get('apikey'), 'test-private-key');
     assert.equal(JSON.stringify(value).includes('test-private-key'), false);
   } finally { market.close(); }
+});
+
+test('major and cross forex execution quotes retain the native quote currency instead of treating every price as USD', async () => {
+  const fixtures = [
+    ['EURUSD', 'EUR', 'USD', 1.167385], ['GBPUSD', 'GBP', 'USD', 1.35],
+    ['AUDUSD', 'AUD', 'USD', 0.67495], ['NZDUSD', 'NZD', 'USD', 0.61235],
+    ['USDJPY', 'USD', 'JPY', 149.735], ['USDCHF', 'USD', 'CHF', 0.86725],
+    ['USDCAD', 'USD', 'CAD', 1.36845], ['EURGBP', 'EUR', 'GBP', 0.86555],
+    ['EURJPY', 'EUR', 'JPY', 174.985], ['GBPJPY', 'GBP', 'JPY', 202.575],
+  ];
+  const calls = [];
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async url => {
+    const query = new URL(url).searchParams;
+    calls.push(query.get('symbol'));
+    const fixture = fixtures.find(([, base, quote]) => `${base}/${quote}` === query.get('symbol'));
+    assert.ok(fixture, 'The requested provider symbol is one of the configured forex pairs');
+    return response({ symbol: query.get('symbol'), close: String(fixture[3]), timestamp: SECOND - 10, is_market_open: true });
+  } });
+  try {
+    for (const [symbol, base, quote, price] of fixtures) {
+      const value = await market.getExecutionQuote(symbol);
+      assert.equal(value.symbol, symbol);
+      assert.equal(value.baseCurrency, base);
+      assert.equal(value.quoteCurrency, quote);
+      assert.equal(value.price, price);
+      assert.equal(value.executable, true);
+      assert.equal(value.asOf, SECOND - 10);
+    }
+    assert.deepEqual(calls, fixtures.map(([, base, quote]) => `${base}/${quote}`));
+  } finally { market.close(); }
+});
+
+test('cross-currency daily chart references query and normalize the requested quote currency for history and latest', async () => {
+  for (const [symbol, base, quote, first, latest] of [
+    ['USDJPY', 'USD', 'JPY', 149.5, 149.75],
+    ['USDCAD', 'USD', 'CAD', 1.36, 1.37],
+    ['EURGBP', 'EUR', 'GBP', 0.864, 0.865],
+  ]) {
+    const calls = [];
+    const market = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async url => {
+      calls.push(url);
+      const query = new URL(url).searchParams;
+      assert.equal(query.get('base'), base);
+      assert.equal(query.get('symbols'), quote);
+      return response(url.includes('/latest?') ? { base, amount: 1, date: '2026-10-12', rates: { [quote]: latest, USD: 999 } } : { base, amount: 1, rates: { '2026-10-09': { [quote]: first, USD: 999 } } });
+    } });
+    try {
+      const result = await market.get(symbol, '1m');
+      assert.equal(result.baseCurrency, base);
+      assert.equal(result.quoteCurrency, quote);
+      assert.equal(result.price, latest);
+      assert.equal(result.quoteKind, 'daily-reference');
+      assert.equal(result.executable, false);
+      assert.equal(result.interval, '1d');
+      assert.deepEqual(result.points, [
+        { time: Date.parse('2026-10-09T00:00:00Z') / 1000, close: first },
+        { time: Date.parse('2026-10-12T00:00:00Z') / 1000, close: latest },
+      ]);
+      assert.equal(calls.length, 2);
+    } finally { market.close(); }
+  }
+});
+
+test('cross forex historical pages use native pair prices and cannot execute from daily references', async () => {
+  const end = Date.parse('2026-10-09T00:00:00Z') / 1000;
+  const calls = [];
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async url => {
+    calls.push(url);
+    assert.equal(new URL(url).searchParams.get('base'), 'EUR');
+    assert.equal(new URL(url).searchParams.get('symbols'), 'JPY');
+    return response({ base: 'EUR', rates: { '2026-10-08': { JPY: 174.5, USD: 1.15 }, '2026-10-09': { JPY: 174.75, USD: 1.16 }, '2026-10-12': { JPY: 175.5, USD: 1.17 } } });
+  } });
+  try {
+    const result = await market.get('EURJPY', '15m', end);
+    assert.equal(result.price, 174.75);
+    assert.equal(result.quoteCurrency, 'JPY');
+    assert.equal(result.executable, false);
+    assert.equal(result.asOf, end);
+    assert.equal(result.points.length, 2);
+    assert.equal(calls.length, 1);
+  } finally { market.close(); }
+});
+
+test('cross forex rejects a missing quote currency in daily history instead of accepting an unrelated USD rate', async () => {
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async url => response(url.includes('/latest?') ? { base: 'USD', date: '2026-10-12', rates: { USD: 1, JPY: 149.75 } } : { base: 'USD', rates: { '2026-10-09': { USD: 1 } } }) });
+  try { await assert.rejects(market.get('USDJPY'), error => error.status === 503); }
+  finally { market.close(); }
 });
 
 test('FX charts label live quote headers separately from their daily reference history and fall back honestly', async () => {

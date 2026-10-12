@@ -1,8 +1,16 @@
 export const MARKETS = {
-  EURUSD: { label: 'EUR / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'EUR units' },
-  GBPUSD: { label: 'GBP / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'GBP units' },
-  BTCUSD: { label: 'BTC / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'BTC' },
-  ETHUSD: { label: 'ETH / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'ETH' },
+  EURUSD: { label: 'EUR / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'EUR units', baseCurrency: 'EUR', quoteCurrency: 'USD' },
+  GBPUSD: { label: 'GBP / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'GBP units', baseCurrency: 'GBP', quoteCurrency: 'USD' },
+  AUDUSD: { label: 'AUD / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'AUD units', baseCurrency: 'AUD', quoteCurrency: 'USD' },
+  NZDUSD: { label: 'NZD / USD', category: 'Forex', decimals: 5, leverage: 30, unit: 'NZD units', baseCurrency: 'NZD', quoteCurrency: 'USD' },
+  USDJPY: { label: 'USD / JPY', category: 'Forex', decimals: 3, leverage: 30, unit: 'USD units', baseCurrency: 'USD', quoteCurrency: 'JPY' },
+  USDCHF: { label: 'USD / CHF', category: 'Forex', decimals: 5, leverage: 30, unit: 'USD units', baseCurrency: 'USD', quoteCurrency: 'CHF' },
+  USDCAD: { label: 'USD / CAD', category: 'Forex', decimals: 5, leverage: 30, unit: 'USD units', baseCurrency: 'USD', quoteCurrency: 'CAD' },
+  EURGBP: { label: 'EUR / GBP', category: 'Forex', decimals: 5, leverage: 30, unit: 'EUR units', baseCurrency: 'EUR', quoteCurrency: 'GBP' },
+  EURJPY: { label: 'EUR / JPY', category: 'Forex', decimals: 3, leverage: 30, unit: 'EUR units', baseCurrency: 'EUR', quoteCurrency: 'JPY' },
+  GBPJPY: { label: 'GBP / JPY', category: 'Forex', decimals: 3, leverage: 30, unit: 'GBP units', baseCurrency: 'GBP', quoteCurrency: 'JPY' },
+  BTCUSD: { label: 'BTC / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'BTC', baseCurrency: 'BTC', quoteCurrency: 'USD' },
+  ETHUSD: { label: 'ETH / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'ETH', baseCurrency: 'ETH', quoteCurrency: 'USD' },
 };
 
 const day = time => new Date(time).toISOString().slice(0, 10);
@@ -10,11 +18,28 @@ const hasMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS,
 export const REFERENCE_MAX_SOURCE_AGE = 120000;
 export const REFERENCE_MAX_FETCH_AGE = 30000;
 const emptyPrice = () => ({ mid: null, previous: null, history: [], asOf: null, fetchedAt: null, source: null, available: false, executable: false });
-const quoteMetadata = q => ({ price: q.price, asOf: q.asOf, fetchedAt: q.fetchedAt, source: q.source });
-export function quoteIsExecutable(account, symbol, now = Date.now()) {
+const CONVERSION_MARKETS = { GBP: { symbol: 'GBPUSD', direction: 'direct' }, JPY: { symbol: 'USDJPY', direction: 'inverse' }, CHF: { symbol: 'USDCHF', direction: 'inverse' }, CAD: { symbol: 'USDCAD', direction: 'inverse' } };
+const quoteMetadata = q => ({ price: q.price, asOf: q.asOf, fetchedAt: q.fetchedAt, source: q.source, ...('usdRate' in q ? { usdRate: q.usdRate, conversionQuote: q.conversionQuote } : {}) });
+export function marketDependencies(symbol) {
+  if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
+  const conversion = CONVERSION_MARKETS[MARKETS[symbol].quoteCurrency];
+  return [...new Set([symbol, ...(conversion ? [conversion.symbol] : [])])];
+}
+export function rawQuoteFresh(account, symbol, now = Date.now()) {
   if (!hasMarket(symbol)) return false;
   const p = account.prices?.[symbol];
   return account.executionMode === 'reference' && !!p && p.available === true && p.executable === true && Number.isFinite(p.mid) && p.mid > 0 && Number.isFinite(p.asOf) && Number.isFinite(p.fetchedAt) && typeof p.source === 'string' && p.source.length > 0 && now - p.asOf * 1000 <= REFERENCE_MAX_SOURCE_AGE && now - p.asOf * 1000 >= -5000 && now - p.fetchedAt <= REFERENCE_MAX_FETCH_AGE && now - p.fetchedAt >= -5000;
+}
+export function quoteIsExecutable(account, symbol, now = Date.now()) {
+  return hasMarket(symbol) && marketDependencies(symbol).every(dependency => rawQuoteFresh(account, dependency, now));
+}
+export function quoteCurrencyToUSD(account, symbol) {
+  if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
+  if (MARKETS[symbol].quoteCurrency === 'USD') return { usdRate: 1, conversionQuote: null };
+  const conversion = CONVERSION_MARKETS[MARKETS[symbol].quoteCurrency];
+  const p = account.executionMode === 'reference' ? account.prices?.[conversion.symbol] : null;
+  if (!p || !Number.isFinite(p.mid) || p.mid <= 0) return { usdRate: null, conversionQuote: null };
+  return { usdRate: conversion.direction === 'inverse' ? 1 / p.mid : p.mid, conversionQuote: { symbol: conversion.symbol, price: p.mid, source: p.source ?? null, asOf: p.asOf ?? null, fetchedAt: p.fetchedAt ?? null, direction: conversion.direction } };
 }
 export function assertExecutableQuote(account, symbol, now = Date.now()) {
   if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
@@ -79,17 +104,18 @@ export function setLimits(account, limits, now = Date.now()) {
   notify(account,'Risk limits saved','Personal limits apply alongside the academy challenge rules.',now);
   refreshRisk(account,now);
 }
-function validateStops(side, entry, quantity, stopLoss, takeProfit, account, reference = null) {
+function validateStops(side, entry, quantity, stopLoss, takeProfit, account, reference = null, usdRate = 1) {
   for (const [label,value] of [['Stop loss',stopLoss],['Take profit',takeProfit]]) if (value !== null && (!Number.isFinite(value) || value <= 0)) throw new Error(`${label} must be a positive price.`);
   if (stopLoss !== null && (side === 'buy' ? stopLoss >= (reference?.bid ?? entry) : stopLoss <= (reference?.ask ?? entry))) throw new Error('Stop loss must be below the bid for a buy or above the ask for a sell.');
   if (takeProfit !== null && (side === 'buy' ? takeProfit <= (reference?.ask ?? entry) : takeProfit >= (reference?.bid ?? entry))) throw new Error('Take profit must be above the ask for a buy or below the bid for a sell.');
-  if (account.limits.maxRisk !== null && (stopLoss === null || Math.max(0, side === 'buy' ? entry-stopLoss : stopLoss-entry) * quantity > account.limits.maxRisk)) throw new Error('Set a stop loss within your maximum risk per trade. Gaps can still exceed planned risk.');
+  if (account.limits.maxRisk !== null && (stopLoss === null || !Number.isFinite(usdRate) || Math.max(0, side === 'buy' ? entry-stopLoss : stopLoss-entry) * quantity * usdRate > account.limits.maxRisk)) throw new Error('Set a stop loss within your maximum risk per trade. Gaps can still exceed planned risk.');
 }
 export function updateStops(account, id, stopLoss, takeProfit, now = Date.now()) {
   ensureTools(account);
   const p=account.positions.find(p=>p.id===id);
   if (!p) throw new Error('This position is no longer open.');
-  validateStops(p.side,p.entry,p.quantity,stopLoss,takeProfit,account,assertExecutableQuote(account,p.symbol,now));
+  const q = assertExecutableQuote(account,p.symbol,now);
+  validateStops(p.side,p.entry,p.quantity,stopLoss,takeProfit,account,q,quoteCurrencyToUSD(account,p.symbol).usdRate);
   p.stopLoss=stopLoss; p.takeProfit=takeProfit;
   notify(account,'Trade protection updated',`${p.symbol} position #${p.id}: stop loss and take profit updated.`,now);
 }
@@ -101,7 +127,7 @@ export function placeLimit(account, order, now = Date.now()) {
   const q=assertExecutableQuote(account,symbol,now);
   if(side==='buy'?limitPrice>=q.ask:limitPrice<=q.bid) throw new Error('A buy limit must be below the ask; a sell limit must be above the bid.');
   if(account.pending.length>=20) throw new Error('The demo allows 20 pending orders.');
-  validateStops(side,limitPrice,quantity,stopLoss,takeProfit,account);
+  validateStops(side,limitPrice,quantity,stopLoss,takeProfit,account,null,quoteCurrencyToUSD(account,symbol).usdRate);
   const pending={id:account.nextId++,symbol,side,quantity,limitPrice,stopLoss,takeProfit,createdAt:now};
   account.pending.push(pending);
   notify(account,'Limit order placed',`${symbol} ${side} limit #${pending.id} at ${limitPrice}. Margin is checked at execution.`,now);
@@ -122,21 +148,29 @@ export function quote(account, symbol) {
   if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
   const p = account.executionMode === 'reference' ? account.prices?.[symbol] ?? emptyPrice() : emptyPrice();
   const mid = Number.isFinite(p.mid) && p.mid > 0 ? p.mid : null;
-  return { bid: mid, ask: mid, price: mid, source: p.source ?? null, asOf: p.asOf ?? null, fetchedAt: p.fetchedAt ?? null, available: p.available === true, executable: p.executable === true };
+  return { bid: mid, ask: mid, price: mid, source: p.source ?? null, asOf: p.asOf ?? null, fetchedAt: p.fetchedAt ?? null, available: p.available === true, executable: p.executable === true, ...(MARKETS[symbol].quoteCurrency === 'USD' ? {} : quoteCurrencyToUSD(account,symbol)) };
 }
 export function pnl(account, position) {
   const prices = quote(account, position.symbol);
-  if (prices.price === null) return 0;
-  return (position.side === 'buy' ? prices.bid - position.entry : position.entry - prices.ask) * position.quantity;
+  const { usdRate } = quoteCurrencyToUSD(account,position.symbol);
+  if (prices.price === null || usdRate === null) return NaN;
+  return (position.side === 'buy' ? prices.bid - position.entry : position.entry - prices.ask) * position.quantity * usdRate;
+}
+function positionMargin(account, position) {
+  if (Number.isFinite(position.marginUsd)) return position.marginUsd;
+  const market = MARKETS[position.symbol];
+  const entryRate = market.quoteCurrency === 'USD' ? 1 : Number.isFinite(position.entryQuote?.usdRate) ? position.entryQuote.usdRate : market.baseCurrency === 'USD' ? 1 / position.entry : NaN;
+  return position.entry * position.quantity * entryRate / market.leverage;
 }
 export function metrics(account, now = Date.now()) {
   const floating = account.positions.reduce((sum, p) => sum + pnl(account, p), 0);
   const equity = account.balance + floating;
-  const margin = account.positions.reduce((sum, p) => sum + p.entry * p.quantity / MARKETS[p.symbol].leverage, 0);
+  const margin = account.positions.reduce((sum, p) => sum + positionMargin(account, p), 0);
   const wins = account.history.filter(t => t.profit > 0).length;
-  const unpricedSymbols = [...new Set(account.positions.filter(p => quote(account,p.symbol).price === null).map(p => p.symbol))];
+  const unpricedSymbols = [...new Set(account.positions.filter(p => !Number.isFinite(pnl(account,p)) || !Number.isFinite(positionMargin(account,p))).map(p => p.symbol))];
   const staleSymbols = [...new Set(account.positions.filter(p => !quoteIsExecutable(account,p.symbol,now)).map(p => p.symbol))];
-  return { floating, equity, margin, freeMargin: equity - margin, net: equity - account.initial, dailyLoss: Math.max(0, account.dailyStart - equity), totalLoss: Math.max(0, account.initial - equity), drawdown: Math.max(0, (account.peak - equity) / account.peak * 100), winRate: account.history.length ? wins / account.history.length * 100 : null, valuationComplete: !unpricedSymbols.length, executionReady: !staleSymbols.length, staleSymbols, unpricedSymbols };
+  const valuationComplete = !unpricedSymbols.length;
+  return { floating: valuationComplete ? floating : null, equity: valuationComplete ? equity : null, margin: Number.isFinite(margin) ? margin : null, freeMargin: valuationComplete ? equity - margin : null, net: valuationComplete ? equity - account.initial : null, dailyLoss: valuationComplete ? Math.max(0, account.dailyStart - equity) : null, totalLoss: valuationComplete ? Math.max(0, account.initial - equity) : null, drawdown: valuationComplete ? Math.max(0, (account.peak - equity) / account.peak * 100) : null, winRate: account.history.length ? wins / account.history.length * 100 : null, valuationComplete, executionReady: !staleSymbols.length && valuationComplete, staleSymbols, unpricedSymbols };
 }
 function captureDayBaseline(account,now) {
   const nextDay=day(now);
@@ -191,11 +225,12 @@ export function openTrade(account, { symbol, side, quantity, stopLoss = null, ta
   const prices = assertExecutableQuote(account, symbol, now);
   for (const existing of account.positions) assertExecutableQuote(account,existing.symbol,now);
   const entry = side === 'buy' ? prices.ask : prices.bid;
-  validateStops(side,entry,quantity,stopLoss,takeProfit,account,prices);
-  const margin = entry * quantity / MARKETS[symbol].leverage;
+  const { usdRate } = quoteCurrencyToUSD(account,symbol);
+  validateStops(side,entry,quantity,stopLoss,takeProfit,account,prices,usdRate);
+  const margin = entry * quantity * usdRate / MARKETS[symbol].leverage;
   const m = metrics(account,now);
   if (margin > m.freeMargin) throw new Error('Insufficient free margin. Reduce your quantity.');
-  const position = { id: account.nextId++, symbol, side, quantity, entry, entryQuote: quoteMetadata(prices), stopLoss, takeProfit, openedAt: now };
+  const position = { id: account.nextId++, symbol, side, quantity, entry, marginUsd: margin, entryQuote: quoteMetadata(prices), stopLoss, takeProfit, openedAt: now };
   account.positions.push(position);
   if(!account.tradingDays.includes(day(now)))account.tradingDays.push(day(now));
   notify(account,'Trade filled',`${symbol} ${side} #${position.id}: ${quantity} units at ${entry.toFixed(MARKETS[symbol].decimals)}.`,now);

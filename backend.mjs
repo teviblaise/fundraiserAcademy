@@ -3,7 +3,7 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } fr
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify, applyReferenceQuotes, markQuoteUnavailable, assertExecutableQuote } from './public/simulator.js';
+import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify, applyReferenceQuotes, markQuoteUnavailable, assertExecutableQuote, marketDependencies } from './public/simulator.js';
 import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
@@ -100,12 +100,13 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
     const before = load(id);
     // Old fills must never receive a windfall from changing their price source.
     if (before.migrationRequired) return before;
-    const symbols = [...new Set([
+    const requested = [
       ...requestedSymbols,
       ...before.positions.map(p => p.symbol),
       ...before.pending.map(p => p.symbol),
       ...before.alerts.filter(a => a.active).map(a => a.symbol),
-    ])];
+    ];
+    const symbols = [...new Set(requested.flatMap(symbol=>marketDependencies(symbol)))];
     const quotes = await Promise.allSettled(symbols.map(symbol => marketData.getExecutionQuote(symbol)));
     if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
     // Reload after the await; account mutations are serialized, while independent

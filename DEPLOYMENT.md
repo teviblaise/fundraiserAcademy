@@ -19,6 +19,9 @@ Crypto reference execution and daily forex history need no API keys: allow outbo
 `api.exchange.coinbase.com` and `api.frankfurter.dev`. Intraday forex execution
 requires `TWELVE_DATA_API_KEY`, configured securely in Render's Environment settings,
 and access to `api.twelvedata.com`. Daily ECB references cannot fill forex trades.
+All ten forex pairs need provider-plan coverage. Yen crosses additionally fetch
+USD/JPY and EUR/GBP fetches GBP/USD to convert account values into USD; include
+that traffic when choosing a quote allowance. Conversion outages pause fills.
 TradingView charts load in
 the visitor's browser and require its script/iframe domains to be accessible.
 After deployment, check a crypto reference quote/candles and a forex daily quote

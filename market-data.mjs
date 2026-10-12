@@ -1,9 +1,17 @@
 const INTERVALS = Object.freeze({ '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 });
 const SYMBOLS = Object.freeze({
-  BTCUSD: { provider: 'coinbase', product: 'BTC-USD' },
-  ETHUSD: { provider: 'coinbase', product: 'ETH-USD' },
-  EURUSD: { provider: 'frankfurter', base: 'EUR' },
-  GBPUSD: { provider: 'frankfurter', base: 'GBP' },
+  BTCUSD: { provider: 'coinbase', product: 'BTC-USD', base: 'BTC', quote: 'USD' },
+  ETHUSD: { provider: 'coinbase', product: 'ETH-USD', base: 'ETH', quote: 'USD' },
+  EURUSD: { provider: 'frankfurter', base: 'EUR', quote: 'USD' },
+  GBPUSD: { provider: 'frankfurter', base: 'GBP', quote: 'USD' },
+  AUDUSD: { provider: 'frankfurter', base: 'AUD', quote: 'USD' },
+  NZDUSD: { provider: 'frankfurter', base: 'NZD', quote: 'USD' },
+  USDJPY: { provider: 'frankfurter', base: 'USD', quote: 'JPY' },
+  USDCHF: { provider: 'frankfurter', base: 'USD', quote: 'CHF' },
+  USDCAD: { provider: 'frankfurter', base: 'USD', quote: 'CAD' },
+  EURGBP: { provider: 'frankfurter', base: 'EUR', quote: 'GBP' },
+  EURJPY: { provider: 'frankfurter', base: 'EUR', quote: 'JPY' },
+  GBPJPY: { provider: 'frankfurter', base: 'GBP', quote: 'JPY' },
 });
 const SOURCES = Object.freeze({
   coinbase: { name: 'Coinbase Exchange', url: 'https://www.coinbase.com/advanced-trade', delayed: false },
@@ -53,7 +61,7 @@ function normalizeCandles(payload, start, end) {
   return candles;
 }
 
-function normalizePoints(payload, base, start, end) {
+function normalizePoints(payload, base, quote, start, end) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !payload.rates || typeof payload.rates !== 'object' || Array.isArray(payload.rates)) throw new Error('Invalid reference response');
   if (payload.base && payload.base !== base) throw new Error('Unexpected reference currency');
   if (payload.amount !== undefined && number(payload.amount) !== 1) throw new Error('Unexpected reference amount');
@@ -61,7 +69,7 @@ function normalizePoints(payload, base, start, end) {
   for (const [date, rates] of Object.entries(payload.rates)) {
     const time = dateSeconds(date);
     if (!rates || typeof rates !== 'object' || Array.isArray(rates)) throw new Error('Invalid reference rate');
-    const close = number(rates.USD);
+    const close = number(rates[quote]);
     if (time >= start && time <= end) points.push({ time, close });
   }
   points.sort((a, b) => a.time - b.time);
@@ -129,7 +137,7 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     } else {
       provider = 'twelvedata';
       // The authenticated request URL and provider error body never reach logs or API errors.
-      const pair = `${spec.base}/USD`;
+      const pair = `${spec.base}/${spec.quote}`;
       const query = new URLSearchParams({ symbol: pair, apikey: fxApiKey });
       const payload = await json(`https://api.twelvedata.com/quote?${query}`, signal);
       if (!payload || payload.status === 'error' || (payload.symbol && payload.symbol !== pair)) throw new Error('Invalid intraday reference');
@@ -139,11 +147,11 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     }
     if (!Number.isSafeInteger(asOf) || asOf <= 0 || asOf > Math.floor(now() / 1000) + 60) throw new Error('Invalid quote timestamp');
     const source = SOURCES[provider];
-    return { symbol, price, asOf, fetchedAt: now(), source: source.name, sourceUrl: source.url };
+    return { symbol, baseCurrency: spec.base, quoteCurrency: spec.quote, price, asOf, fetchedAt: now(), source: source.name, sourceUrl: source.url };
   }
 
   async function quote(symbol) {
-    if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose EURUSD, GBPUSD, BTCUSD, or ETHUSD.', 400);
+    if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose a supported forex or cryptocurrency pair.', 400);
     const provider = SYMBOLS[symbol].provider === 'coinbase' ? 'coinbase' : 'twelvedata';
     if (closed) throw unavailable(provider);
     if (provider === 'twelvedata' && !fxApiKey) throw new MarketDataError('Live forex demo fills need a configured Twelve Data API key. ECB daily reference prices cannot execute trades.');
@@ -232,17 +240,17 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
       const endDay = Math.floor(end / 86400) * 86400;
       const start = Math.max(0, endDay - 450 * 86400);
       const date = time => new Date(time * 1000).toISOString().slice(0, 10);
-      const query = new URLSearchParams({ base: spec.base, symbols: 'USD' });
+      const query = new URLSearchParams({ base: spec.base, symbols: spec.quote });
       const url = 'https://api.frankfurter.dev/v1';
       const [history, latest] = await Promise.all([json(`${url}/${date(start)}..${date(endDay)}?${query}`, signal), historical ? null : json(`${url}/latest?${query}`, signal)]);
-      points = normalizePoints(history, spec.base, start, endDay);
+      points = normalizePoints(history, spec.base, spec.quote, start, endDay);
       const last = points.at(-1);
       price = last.close;
       asOf = last.time;
       if (!historical) {
         if (!latest || typeof latest !== 'object' || (latest.base && latest.base !== spec.base)) throw new Error('Invalid latest reference');
         if (latest.amount !== undefined && number(latest.amount) !== 1) throw new Error('Unexpected reference amount');
-        const latestTime = dateSeconds(latest.date), latestPrice = number(latest.rates?.USD);
+        const latestTime = dateSeconds(latest.date), latestPrice = number(latest.rates?.[spec.quote]);
         if (latestTime > endDay) throw new Error('Invalid latest reference date');
         if (latestTime >= asOf) {
           price = latestPrice;
@@ -264,11 +272,11 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
         }
       }
     }
-    return { symbol, source: source.name, sourceUrl: source.url, kind: spec.provider === 'coinbase' ? 'ohlc' : 'daily', quoteKind, executable, historySource: SOURCES[spec.provider].name, price, asOf, fetchedAt: quoteFetchedAt ?? now(), stale: !historical && spec.provider === 'coinbase' && !executable, interval, candles, points, status: 'ok', delayed: source.delayed };
+    return { symbol, baseCurrency: spec.base, quoteCurrency: spec.quote, source: source.name, sourceUrl: source.url, kind: spec.provider === 'coinbase' ? 'ohlc' : 'daily', quoteKind, executable, historySource: SOURCES[spec.provider].name, price, asOf, fetchedAt: quoteFetchedAt ?? now(), stale: !historical && spec.provider === 'coinbase' && !executable, interval, candles, points, status: 'ok', delayed: source.delayed };
   }
 
   async function get(symbol, interval = '15m', end = undefined) {
-    if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose EURUSD, GBPUSD, BTCUSD, or ETHUSD.', 400);
+    if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose a supported forex or cryptocurrency pair.', 400);
     if (!Object.hasOwn(INTERVALS, interval)) throw new MarketDataError('Choose a supported chart interval: 1m, 5m, 15m, 1h, or 1d.', 400);
     if (end !== undefined && (typeof end !== 'number' || !Number.isSafeInteger(end) || end <= 0 || end > Math.floor(now() / 1000) + 60)) throw new MarketDataError('History end must be a valid past Unix timestamp in seconds.', 400);
     const provider = SYMBOLS[symbol].provider;

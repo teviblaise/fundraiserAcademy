@@ -1,11 +1,12 @@
 import { detectCandlePatterns } from './candle-patterns.js';
+import { MARKETS } from './simulator.js';
 
-const SYMBOLS = ['EURUSD', 'GBPUSD', 'BTCUSD', 'ETHUSD'];
+const hasMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS, symbol);
 const TIMEFRAMES = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '1d': '1 day' };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const dateLabel = (seconds, daily = false) => new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', ...(daily ? {} : { hour: '2-digit', minute: '2-digit' }), timeZone: 'UTC' }).format(seconds * 1000);
-const isCrypto = symbol => symbol === 'BTCUSD' || symbol === 'ETHUSD';
-const priceLabel = (value, symbol) => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { minimumFractionDigits: isCrypto(symbol) ? 2 : 5, maximumFractionDigits: isCrypto(symbol) ? 2 : 5 }).format(value) : '—';
+const isCrypto = symbol => MARKETS[symbol]?.category === 'Crypto';
+const priceLabel = (value, symbol) => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { minimumFractionDigits: MARKETS[symbol].decimals, maximumFractionDigits: MARKETS[symbol].decimals }).format(value) : '—';
 const svgNode = (tag, attrs) => { const node = document.createElementNS(SVG_NS, tag); for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value); return node; };
 
 // Historical charts are for study. The order ticket uses fresh quotes verified by the server.
@@ -13,7 +14,7 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   const storageKey = `fundraiser:market-reference:${userId}`;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { /* Preferences are optional. */ }
-  let symbol = SYMBOLS.includes(initialSymbol) ? initialSymbol : 'EURUSD';
+  let symbol = hasMarket(initialSymbol) ? initialSymbol : 'EURUSD';
   let interval = TIMEFRAMES[saved.interval] ? saved.interval : '15m';
   let view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview');
   let data = null, chartData = [], offset = 0, count = 80, selectedTime = null;
@@ -34,8 +35,9 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   function setStatus(message, state = '') { status.textContent = message; status.dataset.state = state; }
   function resetData() { data = null; chartData = []; offset = 0; historyEnd = null; selectedTime = null; quote.textContent = '—'; sourceRow.replaceChildren(); patternList.replaceChildren(); chart.replaceChildren(); readout.textContent = 'Loading market reference…'; }
   function renderControls() {
-    title.textContent = symbol.replace('USD', ' / USD');
-    el('.mr-price-unit').textContent = isCrypto(symbol) ? `USD per ${symbol.slice(0, 3)}` : `USD per ${symbol.slice(0, 3)}`;
+    const market = MARKETS[symbol];
+    title.textContent = `${market.baseCurrency} / ${market.quoteCurrency}`;
+    el('.mr-price-unit').textContent = `${market.quoteCurrency} per ${market.baseCurrency}`;
     controls.replaceChildren();
     const options = isCrypto(symbol) ? [['candles', 'Candles'], ['line', 'Line'], ['tradingview', 'TradingView']] : [['tradingview', 'Candles · TradingView'], ['line', 'Daily closes']];
     for (const [key, label] of options) {
@@ -177,7 +179,7 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   const timer = setInterval(() => { if (!document.hidden && !destroyed && !refreshing) load(); }, 30000);
   renderControls(); load();
   return {
-    selectSymbol(next) { if (!SYMBOLS.includes(next) || symbol === next || destroyed) return; symbol = next; executionQuote = null; executionReady = null; view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview'); resetData(); tvLoadedKey = ''; renderControls(); load(); },
+    selectSymbol(next) { if (!hasMarket(next) || symbol === next || destroyed) return; symbol = next; executionQuote = null; executionReady = null; view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview'); resetData(); tvLoadedKey = ''; renderControls(); load(); },
     updateExecutionQuote(next, currentQuote, ready) {
       if (destroyed || next !== symbol) return;
       executionReady = ready === true;

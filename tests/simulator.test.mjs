@@ -7,7 +7,7 @@ const feed = (a, symbol, price, time=now) => applyReferenceQuotes(a,[{symbol,pri
 function account(time=now) {
   const a=createAccount(time);
   const testPrices={EURUSD:1.085,GBPUSD:1.272,BTCUSD:64000,ETHUSD:3200};
-  for(const symbol of Object.keys(MARKETS))feed(a,symbol,testPrices[symbol],time);
+  for(const [symbol,testPrice] of Object.entries(testPrices))feed(a,symbol,testPrice,time);
   return a;
 }
 test('buy and sell fill exactly at the reference price and realize reference-priced P&L', () => {

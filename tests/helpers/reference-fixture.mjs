@@ -1,6 +1,6 @@
 // Explicit test dependency; production never imports this provider.
 export function createReferenceFixture({now=Date.now}={}) {
-  const prices={EURUSD:1.085,GBPUSD:1.272,BTCUSD:64000,ETHUSD:3200};
+  const prices={EURUSD:1.085,GBPUSD:1.272,AUDUSD:.66,NZDUSD:.61,USDJPY:150,USDCHF:.89,USDCAD:1.36,EURGBP:.853,EURJPY:162.75,GBPJPY:190.8,BTCUSD:64000,ETHUSD:3200};
   const failures=new Set();const calls=[];
   function valid(symbol){if(!Object.hasOwn(prices,symbol))throw Object.assign(new Error('Unsupported test market.'),{status:400});}
   async function getExecutionQuote(symbol){

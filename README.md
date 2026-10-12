@@ -123,7 +123,7 @@ between candle and line views, inspect OHLC values, and browse older price windo
 Pattern labels identify candle shapes in returned data; they do not predict the
 next price. Chart preferences are remembered on that device per signed-in user.
 
-EUR/USD and GBP/USD use Frankfurter daily central-bank reference closes. These
+The ten forex pairs use Frankfurter daily central-bank reference closes. These
 are daily data, not intraday prices, and are never turned into invented candles.
 TradingView's external candlestick chart supports forex and crypto instruments,
 interval controls, zoom, and historical navigation. Its availability and data
@@ -144,9 +144,17 @@ quotes pause execution. Last valid marks can remain visible with a stale label;
 they cannot open or close a trade. Client-supplied prices are ignored.
 
 Daily forex closes and external TradingView charts are display-only. For executable
-EUR/USD and GBP/USD quotes, configure TWELVE_DATA_API_KEY via secure hosting
+quotes for all forex pairs, configure TWELVE_DATA_API_KEY via secure hosting
 settings; the server uses Twelve Data intraday quotes from api.twelvedata.com.
 Crypto execution uses the Coinbase ticker even if historical candles are unavailable.
+
+The account is denominated in USD. Forex prices retain their native quote currency:
+JPY pairs show three decimal places, and other forex pairs show five. Margin,
+P&L, and risk limits convert to USD using fresh server references. EUR/JPY and
+GBP/JPY require USD/JPY; EUR/GBP requires GBP/USD. USD/JPY, USD/CHF, and USD/CAD
+use their own inverse rate. Entry margin is fixed in USD, and each fill records
+the conversion rate and its source timestamp. An unavailable conversion pauses
+execution; missing valuations display a dash rather than fabricated account values.
 
 Earlier attempts retain their original prices, positions, and results in a
 read-only state. Traders explicitly reset to start a reference-priced attempt;
@@ -215,8 +223,9 @@ Additional authenticated POST endpoints: `/api/limits`, `/api/trades/protection`
 
 ## Trading demo
 
-The simulator starts with $10,000 in demo funds and supports reference-priced EUR/USD, GBP/USD, BTC/USD, and
-ETH/USD quotes. It supports long/short market trades, margin checks, exact reference-price fills,
+The simulator starts with $10,000 in demo funds. Forex markets are EUR/USD,
+GBP/USD, AUD/USD, NZD/USD, USD/JPY, USD/CHF, USD/CAD, EUR/GBP, EUR/JPY, and GBP/JPY.
+Crypto markets are BTC/USD and ETH/USD. It supports long/short market trades, margin checks, exact reference-price fills,
 optional stop-loss/take-profit levels, manual closes, and a JSON journal export.
 The risk monitor displays equity, floating P&L, win rate, and maximum drawdown.
 Challenge rules are 10% realized profit to pass, 5% daily loss from day-start equity,
