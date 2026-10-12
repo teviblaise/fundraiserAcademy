@@ -5,6 +5,7 @@
 @source "../public/contract.js";
 @source "../public/dashboard.js";
 @source "../public/certificates.js";
+@source "../public/market-reference.js";
 
 @theme {
   --color-forest: #0b0b0b;

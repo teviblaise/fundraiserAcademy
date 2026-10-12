@@ -1,8 +1,10 @@
 import { MARKETS, quote, pnl, metrics } from './simulator.js';
 import {showContractNextStep} from './contract-status.js';
+import {createMarketReference} from './market-reference.js';
 
 const $ = id => document.getElementById(id);
 let account;
+let traderId;
 let selected = 'EURUSD';
 let running = true;
 let pushSubscribed=false;
@@ -22,12 +24,14 @@ async function api(endpoint, data) {
 }
 try {
   const result = await api('/api/me');
+  traderId=result.user.id;
   account = (await api('/api/account')).account;
   $('trader-name').textContent = `Welcome, ${result.user.name}. Your practice account is saved on the server.`;
   document.querySelector('main').hidden = false;
 } catch (error) {
   if (!account) { window.location.replace('/login.html'); await new Promise(() => {}); }
 }
+const marketReference=createMarketReference($('real-market-reference'),selected,traderId);
 $('sign-out').addEventListener('click', async () => { try { const subscription=await workerRegistration?.pushManager.getSubscription(); await api('/api/logout', {endpoint:subscription?.endpoint}); if(subscription)await subscription.unsubscribe(); window.location.assign('/login.html'); } catch(error) { message(error.message); } });
 for (const [symbol, market] of Object.entries(MARKETS)) {
   const option = document.createElement('option'); option.value = symbol; option.textContent = market.label; $('symbol').append(option);
@@ -51,6 +55,7 @@ function initialiseLimits() {
 initialiseLimits();
 function selectMarket(symbol) {
   selected = symbol; $('symbol').value = symbol;
+  marketReference.selectSymbol(symbol);
   $('quantity').value = MARKETS[symbol].category === 'Forex' ? '10000' : symbol === 'BTCUSD' ? '0.01' : '0.1';
   $('stop-loss').value = ''; $('take-profit').value = ''; render();
 }
@@ -156,8 +161,8 @@ async function tick() {
 }
 $('pause-feed').addEventListener('click', () => {
   running = !running;
-  $('pause-feed').textContent = running ? 'Pause display' : 'Resume display';
-  $('feed-status').textContent = running ? 'Server synthetic feed' : 'Display paused · server prices continue';
+  $('pause-feed').textContent = running ? 'Pause demo display' : 'Resume demo display';
+  $('feed-status').textContent = running ? 'Server synthetic feed' : 'Demo display paused · server prices continue';
 });
 $('next-tick').addEventListener('click', tick);
 $('reset-account').addEventListener('click', () => $('reset-dialog').showModal());

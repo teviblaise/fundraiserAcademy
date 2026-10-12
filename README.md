@@ -114,6 +114,37 @@ Mutations require JSON and `X-Requested-With: FundraiserAcademy`. All trading en
 require a valid session and always operate on that session's account. Client prices,
 balances, and profit values are never accepted as execution authority.
 
+### Real market references and chart history
+
+The trading desk includes a separate **Market reference** panel. Coinbase Exchange
+provides BTC/USD and ETH/USD last-trade prices and genuine OHLC candles, with
+1-minute, 5-minute, 15-minute, hourly, and daily intervals. Traders can switch
+between candle and line views, inspect OHLC values, and browse older price windows.
+Pattern labels identify candle shapes in returned data; they do not predict the
+next price. Chart preferences are remembered on that device per signed-in user.
+
+EUR/USD and GBP/USD use Frankfurter daily central-bank reference closes. These
+are daily data, not intraday prices, and are never turned into invented candles.
+TradingView's external candlestick chart supports forex and crypto instruments,
+interval controls, zoom, and historical navigation. Its availability and data
+delays depend on the chart provider. Provider attribution remains visible.
+
+The authenticated `/api/market-reference` endpoint validates provider data and
+uses a bounded shared cache and request timeouts. Quotes show their source,
+as-of time, and freshness. Source failures display unavailable or explicitly stale
+cached data. Synthetic prices are never substituted into the market-reference
+panel. Public reference endpoints do not require an API key.
+
+Challenge orders, trade P&L, stops, limits, risk checks, and price alerts continue
+using the **synthetic demo execution prices** shown in the order ticket. Real
+reference prices do not determine challenge passes or funding decisions.
+
+Allow server access to `api.exchange.coinbase.com` and `api.frankfurter.dev`.
+The browser-hosted chart needs `s3.tradingview.com` and TradingView subdomains.
+During cloud development these providers may be blocked by the environment's
+network policy; review/save/publish the added network settings before verifying
+live responses. Mocked transport and browser tests do not prove live data receipt.
+
 ### Trader controls and notifications
 
 The dashboard supports pending buy/sell limit-entry orders and editing stop-loss /

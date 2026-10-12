@@ -7,6 +7,7 @@ import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKE
 import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
+import {createMarketData} from './market-data.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -24,6 +25,7 @@ export function createBackend(databasePath) {
   const delivery=createDelivery(db,databasePath);
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
+  const marketData=createMarketData();
   if(process.env.CONTRACT_FILE)publishContractFile(contracts,{file:process.env.CONTRACT_FILE,version:process.env.CONTRACT_VERSION,title:process.env.CONTRACT_TITLE});
   const rates = new Map();
   const respond = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(data)); };
@@ -122,6 +124,13 @@ export function createBackend(databasePath) {
         session(res,row.id); respond(res,200,{user:{id:row.id,name:row.name,email:row.email,market:row.market}}); return;
       }
       const current = user(req);
+      if(req.method==='GET' && pathname==='/api/market-reference'){
+        limit(req,`market-reference:${current.id}`,60,60000);
+        const query=new URL(req.url,'http://localhost').searchParams;
+        try {respond(res,200,await marketData.get(query.get('symbol'),query.get('interval')||'15m',query.has('end')?Number(query.get('end')):undefined));}
+        catch(error){respond(res,error.status||503,{error:error.message,unavailable:true});}
+        return;
+      }
       if (req.method === 'GET' && pathname === '/api/me') { respond(res,200,{user:current}); return; }
       if(req.method==='GET' && pathname==='/api/contract'){respond(res,200,contracts.status(current.id));return;}
       if(req.method==='POST' && pathname==='/api/contract/sign'){
@@ -211,5 +220,5 @@ export function createBackend(databasePath) {
       throw new RequestError(404,'API endpoint not found.');
     } catch (error) { if (!error.status) console.error('API request failed:',error.message); respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.'}); }
   }
-  return { handle, close() { clearInterval(timer); delivery.close(); db.close(); } };
+  return { handle, close() { clearInterval(timer); marketData.close(); delivery.close(); db.close(); } };
 }

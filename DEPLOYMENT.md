@@ -15,6 +15,13 @@ Render's `RENDER_EXTERNAL_URL` for its default public origin. Registration, simu
 trading, certificates, and popup notifications can be tried without email keys.
 Email requires a verified Resend sender and securely configured provider settings.
 
+Market references need no API keys: allow outbound HTTPS to
+`api.exchange.coinbase.com` and `api.frankfurter.dev`. TradingView charts load in
+the visitor's browser and require its script/iframe domains to be accessible.
+After deployment, check a crypto reference quote/candles and a forex daily quote
+and chart; confirm source times and that source failures are visibly marked.
+Challenge execution and price alerts remain based on the separate demo feed.
+
 The Blueprint explicitly deploys `preview/fundraiser-academy` and checks
 `/healthz` before routing requests to the service. Render supplies the `PORT`;
 the server listens on that port on all interfaces. The build installs the locked

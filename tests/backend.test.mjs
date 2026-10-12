@@ -21,10 +21,13 @@ test('backend registration, authentication, isolated trading records, reset audi
   const registration = {name:'Trader One',email:'one@example.com',password:'a-long-unique-test-password',market:'I trade forex',consent:true};
   try {
     assert.equal((await request('/api/account')).status,401);
+    assert.equal((await request('/api/market-reference?symbol=BTCUSD')).status,401);
     assert.equal((await request('/api/register',{...registration,password:'short'})).status,400);
     assert.equal((await request('/api/register',registration,undefined,{Origin:'https://other.example'})).status,403);
     const first=await request('/api/register',registration);
     assert.equal(first.status,201); assert.match(first.header,/HttpOnly/); assert.match(first.header,/SameSite=Lax/); assert.ok(!('password' in first.body.user));
+    assert.equal((await request('/api/market-reference?symbol=UNSUPPORTED',undefined,first.cookie)).status,400);
+    assert.equal((await request('/api/market-reference?symbol=BTCUSD&interval=invalid',undefined,first.cookie)).status,400);
     const second=await request('/api/register',{...registration,email:'two@example.com',name:'Trader Two'});
     assert.equal(second.status,201);
     assert.equal((await request('/api/register',registration)).status,409);
