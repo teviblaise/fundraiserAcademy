@@ -12,11 +12,33 @@ let notificationSettings=null;
 let checkedPassedAttempt=null;
 let warnedLegacyAttempt=null;
 let orderSubmitting=false;
+let orderFeedback=null;
 const money = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
 const price = (symbol, value) => Number.isFinite(value) ? value.toFixed(MARKETS[symbol].decimals) : '—';
 const color = value => !Number.isFinite(value) ? 'text-muted' : value < 0 ? 'text-red-400' : 'text-lime';
 const quoteTime = value => Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC' }).format(value) + ' UTC' : 'awaiting quote';
 const message = text => { $('dashboard-message').textContent = text; };
+function orderMessage(text, state) {
+  orderFeedback = {text, state};
+  renderOrderStatus();
+}
+function renderOrderStatus(m = metrics(account)) {
+  let paused = '';
+  if (!orderSubmitting) {
+    if (account.migrationRequired) paused = 'This previous attempt is read only. Use Start reference-priced attempt to begin trading with reference prices.';
+    else if (account.locked) paused = account.locked === 'Profit target achieved' ? 'Assessment completed. Visit Trader agreement for the next required step.' : `Trading is locked: ${account.locked}. See the risk monitor for details.`;
+    else if (!executionReady()) {
+      const missing = marketDependencies(selected).filter(symbol => !rawQuoteFresh(account, symbol));
+      paused = `Trading is paused until fresh ${missing.join(', ') || selected} references are available. See the reference status above.`;
+    } else if (m.executionReady === false) paused = `New trades are paused while open positions await fresh prices${m.staleSymbols?.length ? ` (${m.staleSymbols.join(', ')})` : ''}. See the reference status above.`;
+  }
+  const status = $('order-status');
+  const text = [orderFeedback?.text, paused].filter(Boolean).join(' ');
+  const state = orderFeedback?.state === 'error' || orderFeedback?.state === 'pending' ? orderFeedback.state : paused ? 'blocked' : orderFeedback?.state || '';
+  if (status.textContent !== text) status.textContent = text;
+  status.hidden = !text; status.dataset.state = state;
+  status.className = `mt-3 text-sm ${state === 'error' ? 'text-red-400' : state === 'success' ? 'text-lime' : 'text-muted'}`;
+}
 async function api(endpoint, data) {
   const response = await fetch(endpoint, data === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'FundraiserAcademy'}, body:JSON.stringify(data) });
   const result = await response.json();
@@ -63,6 +85,7 @@ function initialiseLimits() {
 }
 initialiseLimits();
 function selectMarket(symbol) {
+  orderFeedback = null;
   selected = symbol; $('symbol').value = symbol;
   marketReference.selectSymbol(symbol);
   $('quantity').value = MARKETS[symbol].category === 'Forex' ? '10000' : symbol === 'BTCUSD' ? '0.01' : '0.1';
@@ -97,6 +120,7 @@ function renderExecutionState(m = metrics(account)) {
   const blocked = orderSubmitting || Boolean(account.locked) || !ready || m.executionReady === false;
   $('submit-order').disabled = blocked;
   $('submit-order').classList.toggle('opacity-50', blocked);
+  renderOrderStatus(m);
   if (!account.migrationRequired && m.executionReady === false) $('execution-quote-status').textContent += ` Open-position risk checks are waiting for fresh prices: ${m.staleSymbols?.join(', ') || 'provider unavailable'}.`;
   for (const button of $('positions').querySelectorAll('[data-execution-symbol]')) button.disabled = !executionReady(button.dataset.executionSymbol);
   if (editingPosition !== null && $('protection-dialog').open) {
@@ -194,13 +218,18 @@ $('symbol').addEventListener('change', event => selectMarket(event.target.value)
 $('quantity').addEventListener('input', estimate); $('side').addEventListener('change', estimate);
 $('limit-price').addEventListener('input', estimate);
 $('order-form').addEventListener('submit', async event => {
-  event.preventDefault(); orderSubmitting=true; $('submit-order').disabled = true;
+  event.preventDefault();
+  const isLimit=$('order-type').value==='limit';
+  orderSubmitting=true; $('submit-order').disabled = true;
+  $('submit-order').textContent = isLimit ? 'Placing limit order…' : 'Placing demo trade…';
+  orderMessage('Checking the reference price and your risk limits…', 'pending');
   try {
-    const isLimit=$('order-type').value==='limit';
     const result = await api(isLimit?'/api/orders':'/api/trades', { symbol:selected, side:$('side').value, quantity:Number($('quantity').value), limitPrice:isLimit?Number($('limit-price').value):undefined, stopLoss:$('stop-loss').value === '' ? null : Number($('stop-loss').value), takeProfit:$('take-profit').value === '' ? null : Number($('take-profit').value) });
-    account = result.account; message(isLimit?'Limit order queued. It will execute at a fresh reference price at your limit or better, subject to server risk checks.':'Demo order filled at the server-verified reference price. No real money was used.');
-  } catch(error) { message(error.message); await tick(); }
-  finally { orderSubmitting=false; }
+    account = result.account;
+    const outcome = isLimit?'Limit order queued. It will execute at a fresh reference price at your limit or better, subject to server risk checks.':'Demo order filled at the server-verified reference price. No real money was used.';
+    message(outcome); orderMessage(outcome, 'success');
+  } catch(error) { message(error.message); orderMessage(error.message, 'error'); $('order-status').scrollIntoView({block:'nearest',inline:'nearest'}); await tick(); }
+  finally { orderSubmitting=false; $('submit-order').textContent = 'Place demo trade'; }
   render();
 });
 let polling = false;
@@ -283,11 +312,11 @@ function displayDeliverySettings() {
   $('disable-push').disabled=!pushSubscribed;
 }
 async function refreshDeliverySettings() {notificationSettings=await api('/api/notification-settings');displayDeliverySettings();}
-if('serviceWorker' in navigator && window.isSecureContext) {
-  try {workerRegistration=await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;pushSubscribed=Boolean(await workerRegistration.pushManager.getSubscription());}catch{message('Background push is unavailable in this browser. Popup and inbox notifications still work.');}
+async function initialiseBackgroundPush() {
+  if(!('serviceWorker' in navigator) || !window.isSecureContext)return;
   navigator.serviceWorker.addEventListener('message',event=>{const notice=event.data?.notice;if(event.data?.type!=='FA_NOTIFICATION'||typeof notice?.title!=='string'||typeof notice?.text!=='string')return;if(!seenNotifications.has(notice.key)){seenNotifications.add(notice.key);popup(notice);}void tick();});
+  try {workerRegistration=await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;pushSubscribed=Boolean(await workerRegistration.pushManager.getSubscription());displayDeliverySettings();}catch{message('Background push is unavailable in this browser. Popup and inbox notifications still work.');}
 }
-try{await refreshDeliverySettings();}catch(error){message(error.message);}
 $('enable-notifications').addEventListener('click',async()=>{
   if(!workerRegistration||!('PushManager' in window)||!('Notification' in window)){message('Background push needs HTTPS (or localhost), a supported browser, and notification permission. Popups remain available.');return;}
   try {
@@ -301,12 +330,15 @@ $('enable-notifications').addEventListener('click',async()=>{
   }catch(error){message(`Background push could not be enabled: ${error.message}. Popups remain available.`);}
 });
 $('disable-push').addEventListener('click',async()=>{try{const subscription=await workerRegistration?.pushManager.getSubscription();if(subscription){notificationSettings=await api('/api/push/unsubscribe',{endpoint:subscription.endpoint});await subscription.unsubscribe();}pushSubscribed=false;displayDeliverySettings();message('Background push disabled on this device.');}catch(error){message(error.message);}});
-$('enable-email').addEventListener('click',async()=>{try{if(notificationSettings.emailVerified){notificationSettings=await api('/api/email/preferences',{enabled:true});message('Email alerts enabled.');}else{notificationSettings=await api('/api/email/request-verification',{});message('Verification email queued. Check your inbox and confirm the link to enable alerts.');}displayDeliverySettings();}catch(error){message(error.message);}});
+$('enable-email').addEventListener('click',async()=>{try{if(!notificationSettings)await refreshDeliverySettings();if(notificationSettings.emailVerified){notificationSettings=await api('/api/email/preferences',{enabled:true});message('Email alerts enabled.');}else{notificationSettings=await api('/api/email/request-verification',{});message('Verification email queued. Check your inbox and confirm the link to enable alerts.');}displayDeliverySettings();}catch(error){message(error.message);}});
 $('disable-email').addEventListener('click',async()=>{try{notificationSettings=await api('/api/email/preferences',{enabled:false});displayDeliverySettings();message('Email alerts disabled.');}catch(error){message(error.message);}});
-await showContractNextStep($('contract-next-step'));
 checkedPassedAttempt=account.locked==='Profit target achieved'?account.notificationEpoch:null;
 render();
 setInterval(() => { if(!document.hidden) tick(); },1500);
 setInterval(() => { if(!document.hidden) { renderExecutionState(); estimate(); } },1000);
 setInterval(()=>{if(!document.hidden)void refreshDeliverySettings().catch(()=>{});},15000);
 document.addEventListener('visibilitychange', () => { if(!document.hidden) tick(); });
+// Optional delivery setup must not delay quote checks, order handling or polling.
+void initialiseBackgroundPush();
+void refreshDeliverySettings().catch(error=>message(error.message));
+void showContractNextStep($('contract-next-step'));
