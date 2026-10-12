@@ -15,3 +15,7 @@ services:
         value: production
       - key: COOKIE_SECURE
         value: "true"
+      # Render prompts securely during initial Blueprint setup. Existing
+      # services must add this key in their own Environment settings.
+      - key: TWELVE_DATA_API_KEY
+        sync: false

@@ -19,6 +19,12 @@ Crypto reference execution and daily forex history need no API keys: allow outbo
 `api.exchange.coinbase.com` and `api.frankfurter.dev`. Intraday forex execution
 requires `TWELVE_DATA_API_KEY`, configured securely in Render's Environment settings,
 and access to `api.twelvedata.com`. Daily ECB references cannot fill forex trades.
+The Blueprint prompts for this secret during initial setup. A key saved in the
+Codex cloud environment does not transfer to Render. For an existing service,
+open its **Environment** settings, add `TWELVE_DATA_API_KEY` with your actual key
+as the secret value, and choose **Save, rebuild, and deploy**. Confirm the service
+uses `preview/fundraiser-academy` and deploys its latest commit. The running server
+reads the key at startup, so a restart/redeploy is required after changing it.
 All ten forex pairs need provider-plan coverage. Yen crosses additionally fetch
 USD/JPY and EUR/GBP fetches GBP/USD to convert account values into USD; include
 that traffic when choosing a quote allowance. Conversion outages pause fills.
@@ -29,6 +35,12 @@ and chart; confirm source times and that source failures are visibly marked.
 Challenge fills, stops, limits, P&L, and price alerts use fresh server-verified
 reference prices. No generated feed or added spread is used. Missing, stale, or
 closed-market quotes pause execution; never enable a fallback for challenge fills.
+
+If forex is paused, read the message below the order ticket. A missing-key message
+means the running Render service has not received its key; a quota/access message
+means the provider is refusing the request. Stale quotes and closed markets wait
+for fresh prices. If the ticket is active but candles are blank, try **Daily
+closes** to distinguish the external TradingView chart from execution quotes.
 
 The Blueprint explicitly deploys `preview/fundraiser-academy` and checks
 `/healthz` before routing requests to the service. Render supplies the `PORT`;

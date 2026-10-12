@@ -512,6 +512,77 @@ test('forex quote caching lasts at most thirty seconds and crypto at most five s
   } finally { market.close(); }
 });
 
+test('accepted quotes near their source freshness deadline expire early and refetch instead of freezing on an aged cache', async () => {
+  let now = NOW, calls = 0;
+  const market = createMarketData({ now: () => now, twelveDataApiKey: 'test-private-key', fetchFn: async () => {
+    calls++;
+    return response({ symbol: 'EUR/USD', close: calls === 1 ? '1.12' : '1.1205', last_quote_at: calls === 1 ? SECOND - 115 : Math.floor(now / 1000) - 1, is_market_open: true });
+  } });
+  try {
+    const first = await market.getExecutionQuote('EURUSD');
+    assert.equal(first.asOf, SECOND - 115);
+    now += 4000;
+    assert.equal((await market.getExecutionQuote('EURUSD')).price, 1.12);
+    assert.equal(calls, 1);
+    now += 2000;
+    const refreshed = await market.getExecutionQuote('EURUSD');
+    assert.equal(refreshed.price, 1.1205);
+    assert.equal(refreshed.asOf, Math.floor(now / 1000) - 1);
+    assert.equal(refreshed.executable, true);
+    assert.equal(calls, 2);
+  } finally { market.close(); }
+});
+
+test('already stale provider observations stay non-executable without increasing the normal retry rate', async () => {
+  let now = NOW, calls = 0;
+  const market = createMarketData({ now: () => now, twelveDataApiKey: 'test-private-key', fetchFn: async () => {
+    calls++;
+    return response({ symbol: 'EUR/USD', close: '1.12', last_quote_at: calls === 1 ? SECOND - 121 : Math.floor(now / 1000) - 1, is_market_open: true });
+  } });
+  try {
+    await assert.rejects(market.getExecutionQuote('EURUSD'), /stale quote/);
+    now += 1500;
+    await assert.rejects(market.getExecutionQuote('EURUSD'), /stale quote/);
+    assert.equal(calls, 1);
+    now += 30000;
+    assert.equal((await market.getExecutionQuote('EURUSD')).executable, true);
+    assert.equal(calls, 2);
+  } finally { market.close(); }
+});
+
+for (const transport of ['http', 'payload']) for (const code of [429, 401, 403]) {
+  test(`forex ${transport} ${code} failures explain safe quota or access guidance throughout the existing cooldown`, async () => {
+    let now = NOW, calls = 0, fail = true;
+    const secret = 'test-private-key';
+    const privateMessage = `Private provider detail: ${secret} https://api.twelvedata.com/quote?apikey=${secret}`;
+    const guidance = code === 429 ? /credits.*wait for credits to reset/ : code === 401 ? /authenticate.*configured API key/ : /denied access.*permissions and provider plan/;
+    const market = createMarketData({ now: () => now, twelveDataApiKey: secret, fetchFn: async url => {
+      calls++;
+      if (!fail) return response({ symbol: new URL(url).searchParams.get('symbol'), close: '1.12', last_quote_at: Math.floor(now / 1000) - 1, is_market_open: true });
+      if (transport === 'payload') return response({ status: 'error', code, message: privateMessage });
+      return { ok: false, status: code, json: async () => { throw new Error('HTTP failure bodies must not be exposed or parsed'); } };
+    } });
+    const safeFailure = error => {
+      assert.ok(error instanceof MarketDataError);
+      assert.equal(error.status, 503);
+      assert.match(error.message, guidance);
+      assert.equal(error.message.includes(secret), false);
+      assert.equal(error.message.includes('Private provider detail'), false);
+      assert.equal(error.message.includes('https://'), false);
+      return true;
+    };
+    try {
+      await assert.rejects(market.getExecutionQuote('EURUSD'), safeFailure);
+      now += 1500;
+      await assert.rejects(market.getExecutionQuote('GBPUSD'), safeFailure);
+      assert.equal(calls, 1);
+      now += 31000; fail = false;
+      assert.equal((await market.getExecutionQuote('GBPUSD')).executable, true);
+      assert.equal(calls, 2);
+    } finally { market.close(); }
+  });
+}
+
 test('closing execution data aborts an in-flight ticker, and execution timeouts remain bounded', async () => {
   let aborted = 0;
   const market = createMarketData({ fetchFn: async (url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => { aborted++; reject(new Error('Aborted')); }, { once: true })) });

@@ -95,6 +95,13 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     return new MarketDataError(`${SOURCES[provider].name} prices are temporarily unavailable. Try again shortly.`);
   }
 
+  function forexAccessError(code) {
+    if (code === 429 || code === '429') return new MarketDataError('Twelve Data API credits are exhausted or rate limited. Forex demo trading is paused; wait for credits to reset and check your provider plan.');
+    if (code === 401 || code === '401') return new MarketDataError('Twelve Data could not authenticate the forex feed. Check the configured API key.');
+    if (code === 403 || code === '403') return new MarketDataError('Twelve Data denied access to intraday forex quotes. Check the API key permissions and provider plan.');
+    return null;
+  }
+
   function copy(value, cached = false, stale = false, historical = false) {
     const quoteAged = !historical && value.quoteKind !== 'daily-reference' && !freshQuote(value);
     const isStale = Boolean(value.stale || stale || quoteAged);
@@ -107,9 +114,12 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
   }
 
-  async function json(url, signal) {
+  async function json(url, signal, provider = undefined) {
     const response = await fetchFn(url, { signal, headers: { Accept: 'application/json', 'User-Agent': 'FundraiserAcademy/1.0 (public market reference)' } });
-    if (!response?.ok) throw new Error('Market provider is unavailable');
+    if (!response?.ok) {
+      const error = provider === 'twelvedata' ? forexAccessError(response?.status) : null;
+      throw error ?? new Error('Market provider is unavailable');
+    }
     return response.json();
   }
 
@@ -139,8 +149,11 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
       // The authenticated request URL and provider error body never reach logs or API errors.
       const pair = `${spec.base}/${spec.quote}`;
       const query = new URLSearchParams({ symbol: pair, interval: '1min', timezone: 'UTC', apikey: fxApiKey });
-      const payload = await json(`https://api.twelvedata.com/quote?${query}`, signal);
-      if (!payload || payload.status === 'error' || (payload.symbol && payload.symbol !== pair)) throw new Error('Invalid intraday reference');
+      const payload = await json(`https://api.twelvedata.com/quote?${query}`, signal, provider);
+      if (!payload || payload.status === 'error' || (payload.symbol && payload.symbol !== pair)) {
+        const error = payload?.status === 'error' ? forexAccessError(payload.code) : null;
+        throw error ?? new Error('Invalid intraday reference');
+      }
       if (payload.is_market_open === false || payload.is_market_open === 'false' || forexClosed(now())) throw new MarketDataError('The forex market is closed. Demo orders are paused until fresh market quotes resume.');
       price = number(payload.close);
       // timestamp identifies the requested interval; last_quote_at identifies
@@ -161,7 +174,8 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     const entry = executionCache.get(symbol);
     if (entry && entry.expires > now()) return structuredClone(entry.value);
     if (executionPending.has(symbol)) return structuredClone(await executionPending.get(symbol));
-    if ((executionCooldown.get(provider) || 0) > now()) throw unavailable(provider);
+    const backoff = executionCooldown.get(provider);
+    if (backoff?.until > now()) throw new MarketDataError(backoff.message, backoff.status);
     const controller = new AbortController();
     controllers.add(controller);
     let timer;
@@ -173,14 +187,17 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
       try {
         const value = await Promise.race([loadExecutionQuote(symbol, controller.signal), deadline]);
         if (closed) throw unavailable(provider);
-        executionCache.set(symbol, { value, expires: now() + (provider === 'coinbase' ? executionCryptoTtlMs : executionFxTtlMs) });
+        const expires = now() + (provider === 'coinbase' ? executionCryptoTtlMs : executionFxTtlMs);
+        // Refresh an accepted snapshot before its observation becomes stale.
+        // Already-stale responses retain the usual retry cadence and never execute.
+        executionCache.set(symbol, { value, expires: freshQuote(value) ? Math.min(expires, value.asOf * 1000 + 120000) : expires });
         executionCooldown.delete(provider);
         return value;
       } catch (error) {
         controller.abort();
-        if (!closed) executionCooldown.set(provider, now() + errorBackoffMs);
-        if (error instanceof MarketDataError) throw error;
-        throw unavailable(provider);
+        const failure = error instanceof MarketDataError ? error : unavailable(provider);
+        if (!closed) executionCooldown.set(provider, { until: now() + errorBackoffMs, message: failure.message, status: failure.status });
+        throw failure;
       } finally {
         clearTimeout(timer);
         controllers.delete(controller);
