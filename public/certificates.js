@@ -20,7 +20,7 @@ try {
   if(!result.certificates.length){status.textContent='No certificates yet. Pass the practice challenge over at least 3 trading days with all positions closed to earn your first certificate.';}
   for(const certificate of result.certificates){
     const card=document.createElement('article');card.className='desk-card';
-    const label=document.createElement('p');label.className='eyebrow mb-3';label.textContent='CHALLENGE COMPLETED';
+    const label=document.createElement('p');label.className='eyebrow mb-3';label.textContent=certificate.priceMode==='reference'?'REFERENCE-PRICED CHALLENGE COMPLETED':'EARLIER DEMO CHALLENGE COMPLETED';
     const heading=document.createElement('h3');heading.className='mb-3';heading.textContent=certificate.holder;
     const detail=document.createElement('p');detail.className='mb-3 text-sm text-muted';detail.textContent=`Issued ${new Date(certificate.issuedAt).toLocaleDateString()} · ${certificate.tradingDays} trading days · Realized return ${certificate.profitPercent.toFixed(2)}%`;
     const id=document.createElement('p');id.className='mb-5 break-all text-[10px] text-muted';id.textContent=`Certificate ID: ${certificate.id}`;

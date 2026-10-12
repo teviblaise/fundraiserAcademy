@@ -116,7 +116,7 @@ balances, and profit values are never accepted as execution authority.
 
 ### Real market references and chart history
 
-The trading desk includes a separate **Market reference** panel. Coinbase Exchange
+The trading desk uses the **Market reference** chart and verified execution quotes. Coinbase Exchange
 provides BTC/USD and ETH/USD last-trade prices and genuine OHLC candles, with
 1-minute, 5-minute, 15-minute, hourly, and daily intervals. Traders can switch
 between candle and line views, inspect OHLC values, and browse older price windows.
@@ -132,14 +132,30 @@ delays depend on the chart provider. Provider attribution remains visible.
 The authenticated `/api/market-reference` endpoint validates provider data and
 uses a bounded shared cache and request timeouts. Quotes show their source,
 as-of time, and freshness. Source failures display unavailable or explicitly stale
-cached data. Synthetic prices are never substituted into the market-reference
-panel. Public reference endpoints do not require an API key.
+cached data. Generated prices are never substituted into references or executions. Crypto
+reference endpoints and daily forex history do not require an API key. Intraday
+forex execution requires TWELVE_DATA_API_KEY and a supporting Twelve Data plan.
 
-Challenge orders, trade P&L, stops, limits, risk checks, and price alerts continue
-using the **synthetic demo execution prices** shown in the order ticket. Real
-reference prices do not determine challenge passes or funding decisions.
+Challenge orders fill exactly at the **server-verified reference price** shown
+in the order ticket, without an added spread. P&L, stops, limits, risk checks, and
+price alerts use the same reference feed. Source quotes must be at most 120
+seconds old and retrieved within 30 seconds. Stale, unavailable, and closed-market
+quotes pause execution. Last valid marks can remain visible with a stale label;
+they cannot open or close a trade. Client-supplied prices are ignored.
 
-Allow server access to `api.exchange.coinbase.com` and `api.frankfurter.dev`.
+Daily forex closes and external TradingView charts are display-only. For executable
+EUR/USD and GBP/USD quotes, configure TWELVE_DATA_API_KEY via secure hosting
+settings; the server uses Twelve Data intraday quotes from api.twelvedata.com.
+Crypto execution uses the Coinbase ticker even if historical candles are unavailable.
+
+Earlier attempts retain their original prices, positions, and results in a
+read-only state. Traders explicitly reset to start a reference-priced attempt;
+reset archives their earlier account and preserves certificates and signed agreements.
+Account polling, market updates, orders, and resets are serialized per user to
+prevent an awaited provider request from overwriting a concurrent trade.
+
+Allow server access to `api.exchange.coinbase.com`, `api.frankfurter.dev`, and
+`api.twelvedata.com` when intraday forex is configured.
 The browser-hosted chart needs `s3.tradingview.com` and TradingView subdomains.
 During cloud development these providers may be blocked by the environment's
 network policy; review/save/publish the added network settings before verifying
@@ -159,7 +175,7 @@ weaken challenge rules. Per-trade risk applies to new orders and stop edits, not
 retroactively to existing positions. Gaps may exceed planned loss. Personal daily
 locks remain until the next UTC day even if settings are later raised or removed.
 
-One-time price alerts watch synthetic mid prices at/above or at/below a target on
+One-time price alerts watch verified reference prices at/above or at/below a target on
 the next server quote. Alerts and orders belong to each authenticated account and
 persist in SQLite. A saved notification inbox contains the latest 100 messages for
 fills, closes, protection edits, limit-order events, risk breaches, and price alerts.
@@ -199,8 +215,8 @@ Additional authenticated POST endpoints: `/api/limits`, `/api/trades/protection`
 
 ## Trading demo
 
-The simulator starts with $10,000 and synthetic EUR/USD, GBP/USD, BTC/USD, and
-ETH/USD quotes. It supports long/short market trades, margin checks, bid/ask spreads,
+The simulator starts with $10,000 in demo funds and supports reference-priced EUR/USD, GBP/USD, BTC/USD, and
+ETH/USD quotes. It supports long/short market trades, margin checks, exact reference-price fills,
 optional stop-loss/take-profit levels, manual closes, and a JSON journal export.
 The risk monitor displays equity, floating P&L, win rate, and maximum drawdown.
 Challenge rules are 10% realized profit to pass, 5% daily loss from day-start equity,
@@ -209,19 +225,20 @@ for a $10,000 account, the equity floor is $9,000. Passing requires no open posi
 and fills on at least 3 distinct UTC trading days. Multiple fills on one day count
 once; unfilled orders and merely holding a position do not add trading days.
 A breach liquidates positions and locks new trades. Daily locks clear on the next
-UTC day; total-loss locks require reset. Prices advance on the server while the user has an active session, even if the
-display is paused or closed. After server downtime there is no price catch-up.
+UTC day; total-loss locks require reset. Open positions, pending orders, and active alerts receive server-side reference
+checks even after logout. Source outages pause execution. On recovery, stops fill
+at the next observed reference, so gaps can exceed the requested stop.
 Commissions and financing are not modeled.
 
 Run `npm test` for backend and trading-engine tests. Browser validation covers
 registration/login, orders, saved records, challenge thresholds, reset, logout, and
-desktop/mobile layouts. Records are server-controlled but prices are synthetic;
+desktop/mobile layouts. Records and reference-price execution are server-controlled;
 practice passing does not approve real funding. A real qualification program needs
-approved market pricing, reviewer tools, and finalized evaluation terms.
+reviewer tools and finalized evaluation terms.
 
-Brand assets include `public/logo.svg`, `public/logo-mark.svg`, and the visual
-identity presentation in `brand/identity-concept.png`. The SVG assets are a simple
-web-ready FA monogram variation; the presentation explores a more detailed mark.
+Brand assets include `public/logo.svg`, `public/logo-mark.svg`, gold and print
+variants, plus the official black/gold identity board and social avatar in
+`public/assets/`.
 `ACADEMY_PLAYBOOK.md` contains positioning, social copy, operating workflow,
 qualification criteria to finalize, and a trader agreement brief.
 
@@ -234,7 +251,7 @@ dates remain to be finalized. The website is not a live funding platform.
 The server issues one certificate per passed attempt after the 10% realized-profit
 and 3-trading-day requirements are met with no open positions. Certificates survive
 account resets. They can be previewed, downloaded as SVG, or printed/saved as PDF.
-The certificate recognizes synthetic practice only, not professional accreditation
+The certificate recognizes paper-trading completion only, not professional accreditation
 or automatic funding approval.
 
 Traders choose their registered name or a nickname (up to 60 characters) with a

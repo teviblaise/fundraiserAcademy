@@ -15,12 +15,17 @@ Render's `RENDER_EXTERNAL_URL` for its default public origin. Registration, simu
 trading, certificates, and popup notifications can be tried without email keys.
 Email requires a verified Resend sender and securely configured provider settings.
 
-Market references need no API keys: allow outbound HTTPS to
-`api.exchange.coinbase.com` and `api.frankfurter.dev`. TradingView charts load in
+Crypto reference execution and daily forex history need no API keys: allow outbound HTTPS to
+`api.exchange.coinbase.com` and `api.frankfurter.dev`. Intraday forex execution
+requires `TWELVE_DATA_API_KEY`, configured securely in Render's Environment settings,
+and access to `api.twelvedata.com`. Daily ECB references cannot fill forex trades.
+TradingView charts load in
 the visitor's browser and require its script/iframe domains to be accessible.
 After deployment, check a crypto reference quote/candles and a forex daily quote
 and chart; confirm source times and that source failures are visibly marked.
-Challenge execution and price alerts remain based on the separate demo feed.
+Challenge fills, stops, limits, P&L, and price alerts use fresh server-verified
+reference prices. No generated feed or added spread is used. Missing, stale, or
+closed-market quotes pause execution; never enable a fallback for challenge fills.
 
 The Blueprint explicitly deploys `preview/fundraiser-academy` and checks
 `/healthz` before routing requests to the service. Render supplies the `PORT`;

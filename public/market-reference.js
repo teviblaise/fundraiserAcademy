@@ -8,7 +8,7 @@ const isCrypto = symbol => symbol === 'BTCUSD' || symbol === 'ETHUSD';
 const priceLabel = (value, symbol) => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { minimumFractionDigits: isCrypto(symbol) ? 2 : 5, maximumFractionDigits: isCrypto(symbol) ? 2 : 5 }).format(value) : '—';
 const svgNode = (tag, attrs) => { const node = document.createElementNS(SVG_NS, tag); for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value); return node; };
 
-// Market data is a reference layer. These prices never enter the simulator's fills or risk calculations.
+// Historical charts are for study. The order ticket uses fresh quotes verified by the server.
 export function createMarketReference(container, initialSymbol = 'EURUSD', userId = 'anonymous') {
   const storageKey = `fundraiser:market-reference:${userId}`;
   let saved = {};
@@ -17,13 +17,14 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   let interval = TIMEFRAMES[saved.interval] ? saved.interval : '15m';
   let view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview');
   let data = null, chartData = [], offset = 0, count = 80, selectedTime = null;
+  let executionQuote = null, executionReady = null;
   let controller = null, sequence = 0, destroyed = false, chartEvents = null, refreshing = false;
   let tvLoadedKey = '', historyEnd = null;
 
   container.classList.add('market-reference');
   container.innerHTML = `<style>
 .market-reference{min-width:0;overflow:hidden}.market-reference *{box-sizing:border-box}.mr-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}.mr-eyebrow{font-size:10px;letter-spacing:.19em;color:#ffd700;font-weight:700;margin:0 0 8px}.mr-title{font-size:24px;letter-spacing:-.04em;margin:0;color:#fff}.mr-quote{text-align:right}.mr-price{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.035em}.mr-subtle{color:#b9b9b9;font-size:11px;line-height:1.6;margin:4px 0}.mr-source{color:#ffd700;text-decoration:underline;text-underline-offset:3px}.mr-badge{display:inline-flex;align-items:center;gap:6px;font-size:10px;padding:5px 8px;border:1px solid #3c3a26;border-radius:5px;color:#ffe879;margin:12px 0}.mr-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:10px 0 12px}.mr-segment{display:flex;border:1px solid #3a3a3a;border-radius:7px;padding:3px;gap:3px;flex-wrap:wrap}.mr-btn{appearance:none;border:1px solid #393939;border-radius:6px;background:#191919;color:#c7c7c7;padding:7px 10px;font:inherit;font-size:11px;cursor:pointer;min-height:33px;white-space:nowrap}.mr-segment .mr-btn{border-color:transparent;background:transparent}.mr-btn:hover{color:#fff;border-color:#6d6020}.mr-btn[aria-pressed=true]{background:#ffd700;color:#0b0b0b;border-color:#ffd700;font-weight:650}.mr-btn:focus-visible,.mr-chart:focus-visible{outline:2px solid #ffd700;outline-offset:3px}.mr-btn:disabled{opacity:.4;cursor:not-allowed}.mr-select{margin:0!important;width:auto!important;padding:7px 30px 7px 10px!important;font-size:11px!important;min-height:33px!important;border-radius:6px!important}.mr-canvas{position:relative;border:1px solid #303030;background:#0b0b0b;border-radius:9px;overflow:hidden}.mr-chart{display:block;width:100%;height:330px;touch-action:pan-y}.mr-readout{min-height:40px;padding:10px 12px;font-size:10px;border-bottom:1px solid #282828;color:#b9b9b9;font-variant-numeric:tabular-nums;line-height:1.7}.mr-readout strong{color:#f4f4f4;font-weight:500}.mr-placeholder{display:flex;align-items:center;justify-content:center;padding:32px;text-align:center;height:330px;color:#b9b9b9;font-size:12px;line-height:1.8}.mr-tradingview{height:430px;width:100%;min-width:0}.mr-tv-loading{padding:20px;font-size:12px;color:#b9b9b9}.mr-navigation{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:11px 0}.mr-nav-buttons{display:flex;gap:5px;flex-wrap:wrap}.mr-status{margin:9px 0 4px;font-size:11px;color:#b9b9b9;line-height:1.65}.mr-status[data-state=error],.mr-status[data-state=stale]{color:#ffce80}.mr-notice{font-size:11px;color:#b9b9b9;line-height:1.7;padding-top:13px;margin:12px 0 0;border-top:1px solid #303030}.mr-patterns{border-top:1px solid #303030;padding-top:16px;margin-top:15px}.mr-pattern-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:7px}.mr-pattern-heading h3{font-size:14px;margin:0}.mr-pattern-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:11px 0}.mr-pattern{display:flex;flex-direction:column;align-items:flex-start;white-space:normal;text-align:left;gap:3px;padding:10px}.mr-pattern span{font-size:10px;color:inherit;opacity:.8}.mr-pattern-name{font-weight:600;font-size:11px}.mr-pattern-empty{font-size:11px;color:#b9b9b9;line-height:1.7}.mr-hidden{display:none!important}@media(max-width:500px){.mr-chart{height:270px}.mr-price{font-size:23px}.mr-top{gap:9px}.mr-pattern-list{grid-template-columns:1fr}.mr-tradingview{height:380px}.mr-controls{align-items:stretch}.mr-select{max-width:100%}.mr-readout{min-height:54px}}
-</style><div class="mr-top"><div><p class="mr-eyebrow">MARKET REFERENCE</p><h2 class="mr-title"></h2><p class="mr-subtle">Price history &amp; candlestick study</p></div><div class="mr-quote"><div class="mr-price">—</div><p class="mr-subtle mr-price-unit">USD per unit</p></div></div><div class="mr-badge">REFERENCE ONLY · DEMO FILLS USE SYNTHETIC PRICES</div><div class="mr-controls"><div class="mr-segment" role="group" aria-label="Reference chart view"></div><label class="mr-subtle mr-timeframe-label">Timeframe <select class="mr-select" aria-label="Reference chart timeframe"></select></label></div><div class="mr-canvas"><div class="mr-local"><div class="mr-readout" aria-live="off">Move over the chart to inspect a candle.</div><svg class="mr-chart" viewBox="0 0 920 340" role="img" aria-label="Market reference price history" tabindex="0"></svg><div class="mr-placeholder mr-hidden"></div></div><div class="mr-tradingview mr-hidden"></div></div><div class="mr-navigation"><span class="mr-range mr-subtle"></span><div class="mr-nav-buttons"><button class="mr-btn" data-nav="older">Older history</button><button class="mr-btn" data-nav="back" aria-label="Pan chart to earlier prices">←</button><button class="mr-btn" data-nav="forward" aria-label="Pan chart to later prices">→</button><button class="mr-btn" data-nav="zoom-in" aria-label="Zoom in on chart">＋</button><button class="mr-btn" data-nav="zoom-out" aria-label="Zoom out of chart">−</button><button class="mr-btn" data-nav="latest">Latest</button></div></div><p class="mr-status" role="status" aria-live="polite"></p><div class="mr-source-row mr-subtle"></div><section class="mr-patterns"><div class="mr-pattern-heading"><h3>Candle pattern study</h3><span class="mr-subtle">Educational indicators</span></div><p class="mr-pattern-intro mr-subtle"></p><div class="mr-pattern-list"></div></section><p class="mr-notice">Market references may be delayed or unavailable. Your demo account, order fills, stops, targets and price alerts continue to use the separate synthetic bid/ask feed. Chart patterns do not predict outcomes.</p>`;
+</style><div class="mr-top"><div><p class="mr-eyebrow">MARKET REFERENCE</p><h2 class="mr-title"></h2><p class="mr-subtle">Price history &amp; candlestick study</p></div><div class="mr-quote"><p class="mr-subtle mr-quote-label">Latest price reference</p><div class="mr-price">—</div><p class="mr-subtle mr-price-unit">USD per unit</p></div></div><div class="mr-badge">REFERENCE PRICES · DEMO FUNDS</div><div class="mr-controls"><div class="mr-segment" role="group" aria-label="Reference chart view"></div><label class="mr-subtle mr-timeframe-label">Timeframe <select class="mr-select" aria-label="Reference chart timeframe"></select></label></div><div class="mr-canvas"><div class="mr-local"><div class="mr-readout" aria-live="off">Move over the chart to inspect a candle.</div><svg class="mr-chart" viewBox="0 0 920 340" role="img" aria-label="Market reference price history" tabindex="0"></svg><div class="mr-placeholder mr-hidden"></div></div><div class="mr-tradingview mr-hidden"></div></div><div class="mr-navigation"><span class="mr-range mr-subtle"></span><div class="mr-nav-buttons"><button class="mr-btn" data-nav="older">Older history</button><button class="mr-btn" data-nav="back" aria-label="Pan chart to earlier prices">←</button><button class="mr-btn" data-nav="forward" aria-label="Pan chart to later prices">→</button><button class="mr-btn" data-nav="zoom-in" aria-label="Zoom in on chart">＋</button><button class="mr-btn" data-nav="zoom-out" aria-label="Zoom out of chart">−</button><button class="mr-btn" data-nav="latest">Latest</button></div></div><p class="mr-status" role="status" aria-live="polite"></p><div class="mr-source-row mr-subtle"></div><section class="mr-patterns"><div class="mr-pattern-heading"><h3>Candle pattern study</h3><span class="mr-subtle">Educational indicators</span></div><p class="mr-pattern-intro mr-subtle"></p><div class="mr-pattern-list"></div></section><p class="mr-notice">Demo fills, stops, targets and alerts use fresh server-verified market reference quotes. Charts and the order ticket can refresh at different times, and TradingView can use another provider. Daily forex rates are chart references only; forex execution waits for fresh intraday quotes. Chart patterns do not predict outcomes.</p>`;
   const el = selector => container.querySelector(selector);
   const title = el('.mr-title'), quote = el('.mr-price'), controls = el('.mr-segment'), timeframe = el('.mr-select');
   const status = el('.mr-status'), sourceRow = el('.mr-source-row'), chart = el('.mr-chart'), readout = el('.mr-readout');
@@ -49,12 +50,23 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   }
   function sourceInfo() {
     sourceRow.replaceChildren();
-    if (!data) return;
-    const link = document.createElement('a'); link.className = 'mr-source'; link.textContent = data.source || 'Market data provider';
-    try { const url = new URL(data.sourceUrl); if (url.protocol === 'https:') { link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } } catch { /* Display source text without an invalid link. */ }
-    sourceRow.append('Source: ', link, ` · As of ${dateLabel(data.asOf, data.kind === 'daily')} UTC`);
-    if (data.fetchedAt) sourceRow.append(` · Retrieved ${new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }).format(data.fetchedAt)} UTC`);
-    if (data.delayed) sourceRow.append(' · Delayed / periodic reference');
+    const header = executionQuote || data;
+    if (!header) return;
+    const link = document.createElement('a'); link.className = 'mr-source'; link.textContent = header.source || 'Market data provider';
+    try { const url = new URL(header.sourceUrl); if (url.protocol === 'https:') { link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } } catch { /* Display source text without an invalid link. */ }
+    sourceRow.append('Quote source: ', link, ` · As of ${dateLabel(header.asOf, header.quoteKind === 'daily-reference')} UTC`);
+    if (header.fetchedAt) sourceRow.append(` · Retrieved ${new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }).format(header.fetchedAt)} UTC`);
+    if (header.delayed) sourceRow.append(' · Delayed / periodic reference');
+    if (executionReady === false) sourceRow.append(' · Demo execution paused');
+    if (data?.historySource) sourceRow.append(` · Chart history: ${data.historySource}`);
+  }
+  function renderQuoteHeader() {
+    const header = executionQuote || data;
+    quote.textContent = priceLabel(header?.price, symbol);
+    el('.mr-quote-label').textContent = executionQuote
+      ? executionReady ? 'Execution reference price' : 'Last execution reference · paused'
+      : header?.quoteKind === 'daily-reference' ? 'Daily chart reference' : executionReady === false ? 'Chart reference · execution paused' : 'Latest price reference';
+    sourceInfo();
   }
   function renderPatterns() {
     patternList.replaceChildren();
@@ -92,7 +104,7 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
     if (view === 'tradingview') { tradingViewChart(); return; }
     chartEvents?.abort(); chartEvents = new AbortController(); chart.replaceChildren();
     const placeholder = el('.mr-placeholder'); placeholder.classList.toggle('mr-hidden', Boolean(chartData.length)); chart.classList.toggle('mr-hidden', !chartData.length);
-    if (!chartData.length) { placeholder.textContent = refreshing ? 'Loading market history…' : 'Market history is unavailable. No generated prices are used in this reference chart.'; nav.querySelectorAll('button').forEach(button => { button.disabled = true; }); el('.mr-range').textContent = ''; readout.textContent = 'No reference history'; return; }
+    if (!chartData.length) { placeholder.textContent = refreshing ? 'Loading market history…' : 'Market history is unavailable. Retry after checking your connection or select another market.'; nav.querySelectorAll('button').forEach(button => { button.disabled = true; }); el('.mr-range').textContent = ''; readout.textContent = 'No reference history'; return; }
     const end = Math.max(1, chartData.length - offset), start = Math.max(0, end - count), visible = chartData.slice(start, end);
     const daily = !isCrypto(symbol) || interval === '1d';
     el('.mr-range').textContent = `${dateLabel(visible[0].time, daily)} – ${dateLabel(visible.at(-1).time, daily)} UTC`;
@@ -131,15 +143,21 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
         const existingLength = chartData.length, oldFirst = chartData[0].time; const byTime = new Map([...clean, ...chartData].map(row => [row.time, row])); chartData = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-3000); offset = Math.min(chartData.length - 1, existingLength); historyEnd = oldFirst;
         setStatus(clean.some(row => row.time < oldFirst) ? 'Earlier history loaded. Use the arrows or Latest to navigate.' : 'No earlier prices were returned for this period.');
       } else {
-        data = result; quote.textContent = priceLabel(result.price, symbol); sourceInfo();
+        data = result; renderQuoteHeader();
         // Keep a browsed historical window stable while the latest quote updates.
         if (!historyEnd) { chartData = clean; offset = Math.min(offset, Math.max(0, chartData.length - 1)); }
-        setStatus(result.stale ? 'STALE reference · prices may be out of date.' : isCrypto(symbol) ? `${result.status === 'cached' ? 'Cached Coinbase' : 'Coinbase'} market candles · reference feed refreshes every 30 seconds.` : `${result.status === 'cached' ? 'Cached ECB' : 'ECB'} daily reference · published on business days. Intraday candles are provided separately by TradingView.`, result.stale ? 'stale' : '');
+        setStatus(result.stale
+          ? 'STALE reference · prices may be out of date. Demo execution waits for a fresh server quote.'
+          : isCrypto(symbol)
+            ? `${result.source || 'Coinbase'} price reference and OHLC history · chart refreshes every 30 seconds. The ticket uses the latest fresh server quote.`
+            : result.quoteKind === 'intraday'
+              ? `${result.source || 'Intraday provider'} price reference · line history uses daily ECB closes. TradingView provides a separate intraday candle chart.`
+              : 'Daily ECB chart history · published on business days. Forex demo fills require verified intraday references; TradingView candles alone do not provide order-ticket prices.', result.stale ? 'stale' : result.quoteKind === 'daily-reference' ? 'stale' : '');
       }
     } catch (error) {
       if (error.name === 'AbortError' || destroyed || id !== sequence) return;
       setStatus(data ? `STALE reference · ${error.message} Last successful quote is still shown.` : `Reference unavailable · ${error.message}`, data ? 'stale' : 'error');
-      if (!data) quote.textContent = '—';
+      if (!data) renderQuoteHeader();
     } finally { if (id === sequence && !destroyed) { refreshing = false; renderChart(); renderPatterns(); } }
   }
   timeframe.addEventListener('change', () => { interval = timeframe.value; persist(); resetData(); tvLoadedKey = ''; load(); });
@@ -159,7 +177,14 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
   const timer = setInterval(() => { if (!document.hidden && !destroyed && !refreshing) load(); }, 30000);
   renderControls(); load();
   return {
-    selectSymbol(next) { if (!SYMBOLS.includes(next) || symbol === next || destroyed) return; symbol = next; view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview'); resetData(); tvLoadedKey = ''; renderControls(); load(); },
+    selectSymbol(next) { if (!SYMBOLS.includes(next) || symbol === next || destroyed) return; symbol = next; executionQuote = null; executionReady = null; view = isCrypto(symbol) ? (['candles', 'line', 'tradingview'].includes(saved.cryptoView) ? saved.cryptoView : 'candles') : (saved.forexView === 'line' ? 'line' : 'tradingview'); resetData(); tvLoadedKey = ''; renderControls(); load(); },
+    updateExecutionQuote(next, currentQuote, ready) {
+      if (destroyed || next !== symbol) return;
+      executionReady = ready === true;
+      const valid = Number.isFinite(currentQuote?.price) && currentQuote.price > 0 && Number.isFinite(currentQuote.asOf) && Number.isFinite(currentQuote.fetchedAt) && typeof currentQuote.source === 'string' && currentQuote.source.length > 0;
+      executionQuote = valid ? { price:currentQuote.price, asOf:currentQuote.asOf, fetchedAt:currentQuote.fetchedAt, source:currentQuote.source, sourceUrl:({ 'Coinbase Exchange':'https://www.coinbase.com/advanced-trade', 'Twelve Data':'https://twelvedata.com/' })[currentQuote.source], quoteKind:isCrypto(symbol) ? 'last-trade' : 'intraday', delayed:false } : null;
+      renderQuoteHeader();
+    },
     destroy() { destroyed = true; sequence++; controller?.abort(); chartEvents?.abort(); clearInterval(timer); resizeObserver.disconnect(); iframeObserver.disconnect(); document.removeEventListener('visibilitychange', onVisible); container.replaceChildren(); }
   };
 }

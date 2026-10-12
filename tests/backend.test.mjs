@@ -6,11 +6,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createBackend } from '../backend.mjs';
 import {DatabaseSync} from 'node:sqlite';
+import {createReferenceFixture} from './helpers/reference-fixture.mjs';
 
 test('backend registration, authentication, isolated trading records, reset audit, and persistence', async () => {
   const folder = await mkdtemp(path.join(tmpdir(),'fa-api-'));
   const database = path.join(folder,'test.sqlite');
-  let backend = createBackend(database);
+  const reference=createReferenceFixture();
+  const options={marketData:reference,autoTick:false};
+  let backend = createBackend(database,options);
   const server = http.createServer((req,res) => backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -53,7 +56,7 @@ test('backend registration, authentication, isolated trading records, reset audi
     const read=await request('/api/notifications/read',{},first.cookie);
     assert.ok(read.body.account.notifications.length>0);assert.ok(read.body.account.notifications.every(n=>n.read));
     assert.equal((await request('/api/account',undefined,second.cookie)).body.account.notifications.length,0);
-    backend.close(); backend=createBackend(database);
+    await backend.close(); backend=createBackend(database,options);
     assert.equal((await request('/api/account',undefined,first.cookie)).body.account.history.length,1);
     assert.equal((await request('/api/account',undefined,first.cookie)).body.account.limits.dailyLoss,100);
     assert.equal((await request('/api/account',undefined,first.cookie)).body.account.alerts.length,1);
@@ -75,20 +78,20 @@ test('backend registration, authentication, isolated trading records, reset audi
     const row=fixtureDb.prepare('SELECT state FROM accounts WHERE user_id=?').get(first.body.user.id);
     const passed=JSON.parse(row.state);passed.balance=11000;passed.locked='Profit target achieved';passed.positions=[];passed.tradingDays=['2026-10-09','2026-10-10','2026-10-11'];
     fixtureDb.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(passed),first.body.user.id);fixtureDb.close();
-    backend.close();backend=createBackend(database);
+    await backend.close();backend=createBackend(database,options);
     const earned=(await request('/api/certificates',undefined,login.cookie)).body.certificates;
-    assert.equal(earned.length,1);assert.equal(earned[0].holder,'Alpha Trader');assert.equal(earned[0].tradingDays,3);
+    assert.equal(earned.length,1);assert.equal(earned[0].holder,'Alpha Trader');assert.equal(earned[0].tradingDays,3);assert.equal(earned[0].priceMode,'reference');
     assert.equal((await request(`/api/certificates/${earned[0].id}`,undefined,second.cookie)).status,404);
     const svgResponse=await fetch(`${origin}/api/certificates/${earned[0].id}.svg`,{headers:{Cookie:login.cookie}});
     assert.equal(svgResponse.status,200);assert.ok((await svgResponse.text()).includes('Certificate of Completion'));
     await request('/api/certificate-preferences',{mode:'name',nickname:'Alpha Trader',applyExisting:true},login.cookie);
     const renamed=(await request('/api/certificates',undefined,login.cookie)).body.certificates[0];
     assert.equal(renamed.holder,'Trader One');assert.equal(renamed.id,earned[0].id);assert.equal(renamed.issuedAt,earned[0].issuedAt);assert.equal(renamed.finalBalance,earned[0].finalBalance);
-    backend.close();backend=createBackend(database);
+    await backend.close();backend=createBackend(database,options);
     assert.equal((await request('/api/certificates',undefined,login.cookie)).body.certificates.length,1);
     await request('/api/account/reset',{},login.cookie);
     assert.equal((await request('/api/certificates',undefined,login.cookie)).body.certificates.length,1);
   } finally {
-    await new Promise(resolve=>server.close(resolve)); backend.close(); await rm(folder,{recursive:true,force:true});
+    await new Promise(resolve=>server.close(resolve)); await backend.close(); await rm(folder,{recursive:true,force:true});
   }
 });

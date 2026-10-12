@@ -3,7 +3,7 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } fr
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify } from './public/simulator.js';
+import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify, applyReferenceQuotes, markQuoteUnavailable, assertExecutableQuote } from './public/simulator.js';
 import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
@@ -12,8 +12,9 @@ import {createMarketData} from './market-data.mjs';
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
+const isMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS, symbol);
 class RequestError extends Error { constructor(status, message) { super(message); this.status = status; } }
-export function createBackend(databasePath) {
+export function createBackend(databasePath, { marketData: injectedMarketData, now = Date.now, tickMs = 5000, autoTick = true } = {}) {
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -25,7 +26,11 @@ export function createBackend(databasePath) {
   const delivery=createDelivery(db,databasePath);
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
-  const marketData=createMarketData();
+  const marketData=injectedMarketData ?? createMarketData();
+  const queues = new Map();
+  const timerPending = new Set();
+  let stopping = false;
+  let closePromise;
   if(process.env.CONTRACT_FILE)publishContractFile(contracts,{file:process.env.CONTRACT_FILE,version:process.env.CONTRACT_VERSION,title:process.env.CONTRACT_TITLE});
   const rates = new Map();
   const respond = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(data)); };
@@ -43,6 +48,7 @@ export function createBackend(databasePath) {
     if (origin && (allowed ? origin !== allowed : new URL(origin).host !== req.headers.host)) throw new RequestError(403, 'Request origin is not allowed.');
     let content = '';
     for await (const chunk of req) { content += chunk; if (Buffer.byteLength(content) > 16384) throw new RequestError(413, 'Request is too large.'); }
+    if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
     try { const data = JSON.parse(content); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(); return data; }
     catch { throw new RequestError(400, 'Invalid JSON request.'); }
   }
@@ -67,30 +73,95 @@ export function createBackend(databasePath) {
     try { certificates.issue(id,state); const fresh=state.notifications.filter(n=>!oldNotices.has(`${n.createdAt}:${n.id}`)); save(id,state); event(id,kind,detail); delivery.enqueue(id,state,fresh); db.exec('COMMIT'); }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  // Existing passed attempts also receive a certificate after this feature is installed.
+  // Every operation that writes account state shares one queue with background fills.
+  // Provider calls may await the network, so loading and saving outside this queue
+  // could otherwise overwrite an intervening trade or reset.
+  function serialized(id, work) {
+    if (stopping) return Promise.reject(new RequestError(503, 'The trading server is restarting. Please try again shortly.'));
+    const task = (queues.get(id) ?? Promise.resolve()).then(() => {
+      if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
+      return work();
+    });
+    const settled = task.catch(() => {});
+    queues.set(id, settled);
+    settled.then(() => { if (queues.get(id) === settled) queues.delete(id); });
+    return task;
+  }
+  function requireReferenceAccount(state) {
+    if (state.migrationRequired) throw new RequestError(409, 'This earlier assessment uses retired prices. Reset the practice account to begin a reference-price assessment. Earlier results and certificates remain saved.');
+  }
+  function requireFresh(state, symbols) {
+    for (const symbol of new Set(symbols)) {
+      try { assertExecutableQuote(state, symbol, now()); }
+      catch (error) { throw new RequestError(503, error.message); }
+    }
+  }
+  async function syncReferenceState(id, requestedSymbols = []) {
+    const before = load(id);
+    // Old fills must never receive a windfall from changing their price source.
+    if (before.migrationRequired) return before;
+    const symbols = [...new Set([
+      ...requestedSymbols,
+      ...before.positions.map(p => p.symbol),
+      ...before.pending.map(p => p.symbol),
+      ...before.alerts.filter(a => a.active).map(a => a.symbol),
+    ])];
+    const quotes = await Promise.allSettled(symbols.map(symbol => marketData.getExecutionQuote(symbol)));
+    if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
+    // Reload after the await; account mutations are serialized, while independent
+    // preference changes and certificate records can still be written normally.
+    const state = load(id);
+    for (let i = 0; i < symbols.length; i++) {
+      const symbol = symbols[i], result = quotes[i];
+      try {
+        if (result.status === 'rejected') throw result.reason;
+        if (result.value?.symbol !== symbol) throw new Error('The market provider returned a mismatched reference price.');
+        applyReferenceQuotes(state, [result.value], now());
+      } catch (error) { markQuoteUnavailable(state, symbol, error?.message || 'Reference price unavailable.'); }
+    }
+    const notices = state.nextNotice;
+    const historyCount = state.history.length;
+    const previousStatus = state.locked;
+    advanceMarket(state, now());
+    if (state.nextNotice !== notices || state.history.length !== historyCount || state.locked !== previousStatus) {
+      commit(id, state, 'reference-market-event', { closedTrades: state.history.slice(0, state.history.length - historyCount), notifications: state.notifications.filter(n => n.id >= notices), status: state.locked });
+    } else save(id, state);
+    return state;
+  }
+  // Existing passed attempts retain their completion and certificates, including
+  // legacy attempts that are now frozen until their owner explicitly resets.
   for(const row of db.prepare('SELECT user_id,state FROM accounts').all()) {
     const state=ensureTools(JSON.parse(row.state));save(row.user_id,state);
     if(state.locked==='Profit target achieved')commit(row.user_id,state,'certificate-check',{});
   }
-  const timer = setInterval(() => {
+  const timer = autoTick ? setInterval(() => {
+    if (stopping) return;
     try {
-      // Only accounts with an active session advance; all fills and risk checks run on the server.
-      const rows = db.prepare('SELECT accounts.user_id,accounts.state FROM accounts WHERE EXISTS (SELECT 1 FROM sessions WHERE sessions.user_id=accounts.user_id AND sessions.expires>?)').all(Date.now());
+      // Open exposure, pending orders, and alerts remain protected after logout
+      // or session expiry. Flat idle accounts do not generate ticker traffic.
+      const rows = db.prepare(`SELECT accounts.user_id,accounts.state FROM accounts
+        WHERE EXISTS (SELECT 1 FROM sessions WHERE sessions.user_id=accounts.user_id AND sessions.expires>?)
+          OR json_array_length(accounts.state,'$.positions')>0
+          OR json_array_length(accounts.state,'$.pending')>0
+          OR EXISTS (SELECT 1 FROM json_each(accounts.state,'$.alerts') AS alert WHERE json_extract(alert.value,'$.active')=1)`).all(Date.now());
       for (const row of rows) {
         const state = ensureTools(JSON.parse(row.state));
-        if (state.locked) { refreshRisk(state); save(row.user_id,state); if (state.locked) continue; }
-        const count = state.history.length;
-        const notices = state.nextNotice;
-        advanceMarket(state);
-        if (state.nextNotice !== notices || state.history.length !== count || state.locked) commit(row.user_id,state,'simulation-event',{ tick:state.ticks, closedTrades:state.history.slice(0,state.history.length-count), notifications:state.notifications.filter(n=>n.id>=notices), status:state.locked });
-        else save(row.user_id,state);
+        if (state.migrationRequired || timerPending.has(row.user_id)) continue;
+        const watching = state.positions.length || state.pending.length || state.alerts.some(a => a.active);
+        const dailyLock = ['Daily loss limit', 'Personal daily loss limit'].includes(state.locked);
+        if (!watching && !dailyLock) continue;
+        timerPending.add(row.user_id);
+        serialized(row.user_id, () => syncReferenceState(row.user_id)).catch(error => {
+          if (!stopping) console.error('Reference-price tick failed:', error.message);
+        }).finally(() => timerPending.delete(row.user_id));
       }
-    } catch (error) { console.error('Simulation tick failed:', error.message); }
-  }, 1500);
-  timer.unref();
+    } catch (error) { if (!stopping) console.error('Reference-price tick failed:', error.message); }
+  }, tickMs) : null;
+  timer?.unref();
 
   async function handle(req, res, pathname) {
     try {
+      if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
       if(req.method==='POST' && pathname==='/api/email/verify') {
         limit(req,'verification',30,600000);
         const data=await body(req);
@@ -108,11 +179,12 @@ export function createBackend(databasePath) {
           if (!name || name.length > 100 || !['I trade forex','I trade crypto','I trade both'].includes(data.market) || data.consent !== true) throw new RequestError(400,'Enter your name, select your market, and accept the registration notice.');
           const salt = randomBytes(16).toString('hex');
           const passwordHash = (await scrypt(password,salt,64)).toString('hex');
+          if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
           let id;
           db.exec('BEGIN');
           try {
             id = Number(db.prepare('INSERT INTO users(email,name,market,password,created_at) VALUES (?,?,?,?,?)').run(email,name,data.market,`${salt}:${passwordHash}`,Date.now()).lastInsertRowid);
-            db.prepare('INSERT INTO accounts VALUES (?,?)').run(id,JSON.stringify(createAccount()));
+            db.prepare('INSERT INTO accounts VALUES (?,?)').run(id,JSON.stringify(createAccount(now())));
             event(id,'registration',{}); db.exec('COMMIT');
           } catch (error) { db.exec('ROLLBACK'); if (error.code?.includes('CONSTRAINT') || error.message.includes('UNIQUE')) throw new RequestError(409,'Unable to register this email. Try logging in.'); throw error; }
           session(res,id); respond(res,201,{user:{id,name,email,market:data.market}}); return;
@@ -120,6 +192,7 @@ export function createBackend(databasePath) {
         const row = db.prepare('SELECT * FROM users WHERE email=?').get(email);
         const [salt, stored] = (row?.password || '00000000000000000000000000000000:' + '0'.repeat(128)).split(':');
         const actual = await scrypt(password,salt,64);
+        if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
         if (!row || !timingSafeEqual(actual,Buffer.from(stored,'hex'))) throw new RequestError(401,'Email or password is incorrect.');
         session(res,row.id); respond(res,200,{user:{id:row.id,name:row.name,email:row.email,market:row.market}}); return;
       }
@@ -174,51 +247,104 @@ export function createBackend(databasePath) {
         const token = /fa_session=([a-f0-9]{64})/.exec(req.headers.cookie || '')?.[1];
         db.prepare('DELETE FROM sessions WHERE token=?').run(hash(token)); cookie(res,'',0); respond(res,200,{ok:true}); return;
       }
-      if (req.method === 'GET' && pathname === '/api/account') { respond(res,200,{account:load(current.id)}); return; }
-      if (req.method === 'GET' && pathname === '/api/journal') { respond(res,200,{notice:'Server-recorded synthetic trading simulation; not proof of real-market trading ability.',exportedAt:new Date().toISOString(),account:load(current.id)}); return; }
+      if (req.method === 'GET' && pathname === '/api/account') {
+        limit(req, `account:${current.id}`, 120, 60000);
+        const symbol = new URL(req.url, 'http://localhost').searchParams.get('symbol') || 'EURUSD';
+        if (!isMarket(symbol)) throw new RequestError(400, 'Select a supported market.');
+        const state = await serialized(current.id, () => syncReferenceState(current.id, [symbol]));
+        respond(res, 200, { account: state }); return;
+      }
+      if (req.method === 'GET' && pathname === '/api/journal') {
+        const state = await serialized(current.id, () => load(current.id));
+        respond(res,200,{notice:state.migrationRequired ? 'Historical demo assessment recorded before reference-price execution; archived fills use the earlier price model.' : 'Server-recorded demo trading at reference market prices; fills are simulated and do not represent live broker execution.',exportedAt:new Date(now()).toISOString(),account:state}); return;
+      }
       if (req.method==='POST' && ['/api/limits','/api/trades/protection','/api/orders','/api/orders/cancel','/api/alerts','/api/alerts/remove','/api/notifications/read'].includes(pathname)) {
         limit(req,'trades',120,60000);
-        const data=await body(req); const state=load(current.id);
-        try {
-          if(pathname==='/api/limits') setLimits(state,data);
-          else if(pathname==='/api/trades/protection') updateStops(state,data.id,data.stopLoss??null,data.takeProfit??null);
-          else if(pathname==='/api/orders') placeLimit(state,data);
-          else if(pathname==='/api/alerts') addAlert(state,data);
-          else if(pathname==='/api/notifications/read') for(const n of state.notifications) n.read=true;
-          else {
-            const key=pathname==='/api/orders/cancel'?'pending':'alerts';
-            if(!Number.isInteger(data.id) || !state[key].some(item=>item.id===data.id)) throw new Error('This item no longer exists.');
-            state[key]=state[key].filter(item=>item.id!==data.id);
-            if(key==='pending') notify(state,'Limit order cancelled',`Pending order #${data.id} cancelled.`);
+        const data=await body(req);
+        const state=await serialized(current.id, async () => {
+          const before = load(current.id);
+          if (pathname !== '/api/notifications/read') requireReferenceAccount(before);
+          let requestedSymbols = [];
+          if (pathname === '/api/orders' || pathname === '/api/alerts') {
+            if (!isMarket(data.symbol)) throw new RequestError(400, 'Select a supported market.');
+            requestedSymbols = [data.symbol];
+          } else if (pathname === '/api/trades/protection') {
+            const position = before.positions.find(p => p.id === data.id);
+            if (!Number.isInteger(data.id) || !position) throw new RequestError(400, 'This position is no longer open.');
+            requestedSymbols = [position.symbol];
           }
-          commit(current.id,state,pathname.slice(5),data);
-        } catch(error) { throw new RequestError(400,error.message); }
+          // Cancelling and acknowledging notices remain possible during outages.
+          const needsSync = ['/api/limits', '/api/trades/protection', '/api/orders', '/api/alerts'].includes(pathname);
+          const account = needsSync ? await syncReferenceState(current.id, requestedSymbols) : load(current.id);
+          try {
+            if(pathname==='/api/limits') setLimits(account,data,now());
+            else if(pathname==='/api/trades/protection') {
+              requireFresh(account, requestedSymbols);
+              updateStops(account,data.id,data.stopLoss??null,data.takeProfit??null,now());
+            } else if(pathname==='/api/orders') {
+              requireFresh(account, [data.symbol, ...account.positions.map(p => p.symbol)]);
+              placeLimit(account,data,now());
+            } else if(pathname==='/api/alerts') addAlert(account,data,now());
+            else if(pathname==='/api/notifications/read') for(const n of account.notifications) n.read=true;
+            else {
+              const key=pathname==='/api/orders/cancel'?'pending':'alerts';
+              if(!Number.isInteger(data.id) || !account[key].some(item=>item.id===data.id)) throw new Error('This item no longer exists.');
+              account[key]=account[key].filter(item=>item.id!==data.id);
+              if(key==='pending') notify(account,'Limit order cancelled',`Pending order #${data.id} cancelled.`,now());
+            }
+            commit(current.id,account,pathname.slice(5),data);
+          } catch(error) { if (error instanceof RequestError) throw error; throw new RequestError(400,error.message); }
+          return account;
+        });
         respond(res,200,{account:state}); return;
       }
       if (req.method === 'POST' && ['/api/trades','/api/trades/close','/api/account/reset'].includes(pathname)) {
         limit(req,'trades',120,60000);
         const data = await body(req);
-        let state = load(current.id);
-        if (pathname === '/api/account/reset') {
-          event(current.id,'reset-archive',state);
-          state = createAccount(); commit(current.id,state,'reset',{});
-          respond(res,200,{account:state,message:'Practice account reset. Earlier attempts remain in the server audit record.'}); return;
-        }
-        try {
-          if (pathname === '/api/trades') {
-            if (!MARKETS[data.symbol]) throw new Error('Select a supported market.');
-            const trade = openTrade(state,{symbol:data.symbol,side:data.side,quantity:data.quantity,stopLoss:data.stopLoss ?? null,takeProfit:data.takeProfit ?? null});
-            commit(current.id,state,'trade-open',trade);
-          } else {
-            if (!Number.isInteger(data.id)) throw new Error('Select a valid position.');
-            closeTrade(state,data.id); refreshRisk(state);
-            commit(current.id,state,'trade-close',state.history[0]);
+        const result = await serialized(current.id, async () => {
+          let state = load(current.id);
+          if (pathname === '/api/account/reset') {
+            event(current.id,'reset-archive',state);
+            state = createAccount(now()); commit(current.id,state,'reset',{});
+            return {account:state,message:'Practice account reset for reference-price trading. Earlier attempts and certificates remain saved.'};
           }
-        } catch (error) { if (!(error instanceof RequestError)) throw new RequestError(400,error.message); throw error; }
-        respond(res,200,{account:state}); return;
+          requireReferenceAccount(state);
+          let symbol;
+          if (pathname === '/api/trades') {
+            if (!isMarket(data.symbol)) throw new RequestError(400, 'Select a supported market.');
+            symbol = data.symbol;
+          } else {
+            const position = state.positions.find(p => p.id === data.id);
+            if (!Number.isInteger(data.id) || !position) throw new RequestError(400, 'This position is no longer open.');
+            symbol = position.symbol;
+          }
+          // Persist market fills and risk liquidation first, even when the
+          // requested order is subsequently rejected or its quote is unavailable.
+          state = await syncReferenceState(current.id, [symbol]);
+          requireFresh(state, pathname === '/api/trades' ? [symbol, ...state.positions.map(p => p.symbol)] : [symbol]);
+          try {
+            if (pathname === '/api/trades') {
+              const trade = openTrade(state,{symbol:data.symbol,side:data.side,quantity:data.quantity,stopLoss:data.stopLoss ?? null,takeProfit:data.takeProfit ?? null},now());
+              commit(current.id,state,'trade-open',trade);
+            } else {
+              closeTrade(state,data.id,'Manual close',now()); refreshRisk(state,now());
+              commit(current.id,state,'trade-close',state.history[0]);
+            }
+          } catch (error) { if (error instanceof RequestError) throw error; throw new RequestError(400,error.message); }
+          return {account:state};
+        });
+        respond(res,200,result); return;
       }
       throw new RequestError(404,'API endpoint not found.');
     } catch (error) { if (!error.status) console.error('API request failed:',error.message); respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.'}); }
   }
-  return { handle, close() { clearInterval(timer); marketData.close(); delivery.close(); db.close(); } };
+  return { handle, close() {
+    if (closePromise) return closePromise;
+    stopping = true;
+    if (timer) clearInterval(timer);
+    marketData.close?.();
+    delivery.close();
+    closePromise = Promise.allSettled([...queues.values()]).then(() => db.close());
+    return closePromise;
+  } };
 }

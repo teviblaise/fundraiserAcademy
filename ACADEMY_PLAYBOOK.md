@@ -100,6 +100,6 @@ Each user has a separate account. The challenge has a 10% realized-profit target
 UTC day-start equity. Passing requires no open positions and fills on at least 3 distinct UTC trading days. These practice outcomes
 do not approve funding. Notification email opt-in verification is implemented; password recovery, reviewer workflows,
 account deletion/retention, production operations, and payout integration remain
-unfinished. Prices are synthetic and do not establish real-market ability.
+unfinished. Paper trades fill at verified market-reference prices without an added spread. Stale or unavailable quotes pause execution; this still does not establish live account performance. Intraday forex requires Twelve Data configuration; daily ECB closes are display-only. Earlier price-model attempts are retained until an explicit reset.
 
 Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. Until the document is supplied, the agreement remains pending. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.

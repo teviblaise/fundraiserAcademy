@@ -71,7 +71,7 @@ test('historical crypto pagination bounds the provider window and uses the last 
 
 test('FX references stay daily and never fabricate intraday candles or open/high/low values', async () => {
   const calls = [];
-  const market = createMarketData({ now: () => NOW, fetchFn: async url => {
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async url => {
     calls.push(url);
     return response(url.includes('/latest?') ? { base: 'EUR', amount: 1, date: '2026-10-12', rates: { USD: 1.165 } } : { base: 'EUR', amount: 1, rates: { '2026-10-09': { USD: 1.16 }, '2026-10-08': { USD: 1.155 } } });
   } });
@@ -99,7 +99,7 @@ test('FX references stay daily and never fabricate intraday candles or open/high
 test('historical FX pages use only reference points within the requested day', async () => {
   const calls = [];
   const end = Date.parse('2026-10-09T00:00:00Z') / 1000;
-  const market = createMarketData({ now: () => NOW, fetchFn: async url => {
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async url => {
     calls.push(url);
     return response({ base: 'GBP', rates: { '2026-10-08': { USD: 1.33 }, '2026-10-09': { USD: 1.34 }, '2026-10-12': { USD: 1.35 } } });
   } });
@@ -146,7 +146,7 @@ test('unavailable or malformed sources produce explicit errors rather than imagi
     try { await assert.rejects(market.get('BTCUSD'), error => error.status === 503); }
     finally { market.close(); }
   }
-  const fx = createMarketData({ now: () => NOW, fetchFn: async url => response(url.includes('/latest?') ? { base: 'EUR', date: '2026-10-12', rates: { USD: 1.1 } } : { base: 'EUR', rates: { '2026-02-30': { USD: 1.1 } } }) });
+  const fx = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async url => response(url.includes('/latest?') ? { base: 'EUR', date: '2026-10-12', rates: { USD: 1.1 } } : { base: 'EUR', rates: { '2026-02-30': { USD: 1.1 } } }) });
   try { await assert.rejects(fx.get('EURUSD'), error => error.status === 503); }
   finally { fx.close(); }
 });
@@ -214,4 +214,211 @@ test('closing market references aborts active requests and rejects later reads',
   await assert.rejects(pending, error => error.status === 503);
   await assert.rejects(market.get('BTCUSD'), error => error.status === 503);
   assert.equal(aborted, 2);
+});
+
+test('execution quotes use the exact last-trade reference without fetching candles, adding a spread, or sharing mutable responses', async () => {
+  const calls = [];
+  const market = createMarketData({ now: () => NOW, fetchFn: async url => { calls.push(url); assert.match(url, /\/products\/BTC-USD\/ticker$/); return response(ticker); } });
+  try {
+    const value = await market.getExecutionQuote('BTCUSD');
+    assert.deepEqual(value, { symbol: 'BTCUSD', price: 111.25, asOf: SECOND - 2, fetchedAt: NOW, source: 'Coinbase Exchange', sourceUrl: 'https://www.coinbase.com/advanced-trade', executable: true });
+    value.price = 0;
+    assert.equal((await market.getExecutionQuote('BTCUSD')).price, 111.25);
+    assert.equal(calls.length, 1);
+  } finally { market.close(); }
+});
+
+test('execution requests share an in-flight quote across trading and chart readers', async () => {
+  let release, calls = 0;
+  const ready = new Promise(resolve => { release = resolve; });
+  const market = createMarketData({ now: () => NOW, fetchFn: async url => { calls++; await ready; return response(url.includes('/ticker') ? ticker : CANDLES); } });
+  try {
+    const execution = market.getExecutionQuote('BTCUSD'), duplicate = market.getExecutionQuote('BTCUSD'), chart = market.get('BTCUSD');
+    release();
+    const [first, second, reference] = await Promise.all([execution, duplicate, chart]);
+    assert.equal(calls, 2);
+    assert.equal(first.price, reference.price);
+    assert.equal(first.asOf, reference.asOf);
+    assert.equal(reference.quoteKind, 'last-trade');
+    assert.equal(reference.executable, true);
+    first.price = 999;
+    assert.equal(second.price, 111.25);
+  } finally { market.close(); }
+});
+
+test('latest chart headers refresh the same execution quote while cached candles stay intact', async () => {
+  let now = NOW, lastPrice = '111.25';
+  const calls = [];
+  const market = createMarketData({ now: () => now, fetchFn: async url => { calls.push(url); return response(url.includes('/ticker') ? { price: lastPrice, time: new Date(now - 1000).toISOString() } : CANDLES); } });
+  try {
+    const first = await market.get('BTCUSD');
+    now += 6000; lastPrice = '114.075';
+    const next = await market.get('BTCUSD'), execution = await market.getExecutionQuote('BTCUSD');
+    assert.equal(next.status, 'cached');
+    assert.equal(next.price, 114.075);
+    assert.equal(next.price, execution.price);
+    assert.equal(next.asOf, execution.asOf);
+    assert.deepEqual(next.candles, first.candles);
+    assert.equal(calls.filter(url => url.includes('/candles?')).length, 1);
+    assert.equal(calls.filter(url => url.includes('/ticker')).length, 2);
+  } finally { market.close(); }
+});
+
+test('failed refreshes never execute a cached quote and provider backoff applies to related symbols', async () => {
+  let now = NOW, fail = false, calls = 0;
+  const market = createMarketData({ now: () => now, fetchFn: async () => { calls++; if (fail) throw new Error('A secret-bearing provider failure'); return response({ ...ticker, time: new Date(now - 1000).toISOString() }); } });
+  try {
+    await market.getExecutionQuote('BTCUSD');
+    now += 6000; fail = true;
+    await assert.rejects(market.getExecutionQuote('BTCUSD'), error => error.status === 503 && !error.message.includes('secret-bearing'));
+    await assert.rejects(market.getExecutionQuote('BTCUSD'), error => error.status === 503);
+    await assert.rejects(market.getExecutionQuote('ETHUSD'), error => error.status === 503);
+    assert.equal(calls, 2);
+    now += 31000; fail = false;
+    assert.equal((await market.getExecutionQuote('BTCUSD')).executable, true);
+    assert.equal(calls, 3);
+  } finally { market.close(); }
+});
+
+test('execution rejects stale, invalid, and future quote timestamps without replacing them with synthetic prices', async () => {
+  const invalid = [
+    { price: '111.25', time: new Date(NOW - 121000).toISOString() },
+    { price: '111.25', time: new Date(NOW + 61000).toISOString() },
+    { price: '111.25', time: 'invalid' },
+    { price: '0', time: ticker.time },
+    { price: 'NaN', time: ticker.time },
+    { price: '-1', time: ticker.time },
+  ];
+  for (const value of invalid) {
+    const market = createMarketData({ now: () => NOW, fetchFn: async () => response(value) });
+    try { await assert.rejects(market.getExecutionQuote('BTCUSD'), error => error instanceof MarketDataError && error.status === 503); }
+    finally { market.close(); }
+  }
+  let now = NOW;
+  const market = createMarketData({ now: () => now, fetchFn: async () => response({ price: '100', time: new Date(NOW - 119000).toISOString() }) });
+  try {
+    await market.getExecutionQuote('BTCUSD');
+    now += 2000;
+    await assert.rejects(market.getExecutionQuote('BTCUSD'), error => /stale quote/.test(error.message));
+  } finally { market.close(); }
+});
+
+test('daily ECB rates never execute forex orders and missing configuration sends no network requests', async () => {
+  let calls = 0;
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: '', fetchFn: async () => { calls++; return response({ base: 'EUR', date: '2026-10-12', rates: { USD: 1.16 } }); } });
+  try {
+    await assert.rejects(market.getExecutionQuote('EURUSD'), error => error.status === 503 && /API key/.test(error.message) && /daily reference/.test(error.message));
+    await assert.rejects(market.getExecutionQuote('GBPUSD'), error => error.status === 503);
+    await assert.rejects(market.getExecutionQuote('INVALID'), error => error.status === 400);
+    assert.equal(calls, 0);
+  } finally { market.close(); }
+});
+
+test('configured forex uses the exact intraday close and timestamp; API credentials stay out of normalized data', async () => {
+  const calls = [];
+  const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async url => { calls.push(url); return response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND - 20, is_market_open: true }); } });
+  try {
+    const value = await market.getExecutionQuote('EURUSD');
+    assert.deepEqual(value, { symbol: 'EURUSD', price: 1.167385, asOf: SECOND - 20, fetchedAt: NOW, source: 'Twelve Data', sourceUrl: 'https://twelvedata.com/', executable: true });
+    assert.equal(calls.length, 1);
+    const request = new URL(calls[0]);
+    assert.equal(request.origin, 'https://api.twelvedata.com');
+    assert.equal(request.pathname, '/quote');
+    assert.equal(request.searchParams.get('symbol'), 'EUR/USD');
+    assert.equal(request.searchParams.get('apikey'), 'test-private-key');
+    assert.equal(JSON.stringify(value).includes('test-private-key'), false);
+  } finally { market.close(); }
+});
+
+test('FX charts label live quote headers separately from their daily reference history and fall back honestly', async () => {
+  let now = NOW, fail = false;
+  const market = createMarketData({ now: () => now, twelveDataApiKey: 'test-private-key', fetchFn: async url => {
+    if (url.includes('twelvedata')) { if (fail) return { ok: false, status: 429 }; return response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND - 20, is_market_open: true }); }
+    return response(url.includes('/latest?') ? { base: 'EUR', date: '2026-10-12', rates: { USD: 1.16 } } : { base: 'EUR', rates: { '2026-10-09': { USD: 1.15 } } });
+  } });
+  try {
+    const first = await market.get('EURUSD');
+    assert.equal(first.kind, 'daily');
+    assert.equal(first.source, 'Twelve Data');
+    assert.equal(first.historySource, 'Frankfurter / ECB daily reference');
+    assert.equal(first.quoteKind, 'intraday');
+    assert.equal(first.executable, true);
+    assert.equal(first.delayed, false);
+    assert.equal(first.price, 1.167385);
+    assert.equal(first.points.at(-1).close, 1.16);
+    assert.deepEqual(first.candles, []);
+    now += 31000; fail = true;
+    const fallback = await market.get('EURUSD');
+    assert.equal(fallback.price, 1.16);
+    assert.equal(fallback.asOf, Date.parse('2026-10-12T00:00:00Z') / 1000);
+    assert.equal(fallback.quoteKind, 'daily-reference');
+    assert.equal(fallback.source, 'Frankfurter / ECB daily reference');
+    assert.equal(fallback.executable, false);
+    assert.equal(fallback.delayed, true);
+    await assert.rejects(market.getExecutionQuote('EURUSD'), error => error.status === 503);
+  } finally { market.close(); }
+});
+
+test('forex refuses stale, closed, malformed, and rate-limited quotes without revealing keys or provider error bodies', async () => {
+  const values = [
+    { ok: true, body: { symbol: 'EUR/USD', close: '1.16', timestamp: SECOND - 121, is_market_open: true } },
+    { ok: true, body: { symbol: 'EUR/USD', close: '1.16', timestamp: SECOND, is_market_open: false } },
+    { ok: true, body: { symbol: 'GBP/USD', close: '1.16', timestamp: SECOND, is_market_open: true } },
+    { ok: true, body: { status: 'error', code: 429, message: 'test-private-key is rejected' } },
+    { ok: false, status: 429 },
+  ];
+  for (const value of values) {
+    let calls = 0;
+    const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async () => { calls++; return value.ok ? response(value.body) : value; } });
+    try {
+      await assert.rejects(market.getExecutionQuote('EURUSD'), error => error.status === 503 && !error.message.includes('test-private-key'));
+      await assert.rejects(market.getExecutionQuote('EURUSD'), error => error.status === 503);
+      assert.equal(calls, 1);
+    } finally { market.close(); }
+  }
+  let calls = 0;
+  const weekend = createMarketData({ now: () => Date.parse('2026-10-10T12:00:00Z'), twelveDataApiKey: 'test-private-key', fetchFn: async () => { calls++; throw new Error('Must not fetch'); } });
+  try {
+    await assert.rejects(weekend.getExecutionQuote('EURUSD'), error => /market is closed/.test(error.message));
+    assert.equal(calls, 0);
+  } finally { weekend.close(); }
+});
+
+test('forex quote caching lasts at most thirty seconds and crypto at most five seconds', async () => {
+  let now = NOW, calls = 0;
+  const market = createMarketData({ now: () => now, executionCryptoTtlMs: 100000, executionFxTtlMs: 100000, twelveDataApiKey: 'test-private-key', fetchFn: async url => { calls++; return response(url.includes('twelvedata') ? { symbol: 'GBP/USD', close: '1.35', timestamp: Math.floor(now / 1000), is_market_open: true } : { price: '111.25', time: new Date(now).toISOString() }); } });
+  try {
+    await market.getExecutionQuote('BTCUSD');
+    await market.getExecutionQuote('GBPUSD');
+    now += 4999;
+    await market.getExecutionQuote('BTCUSD');
+    assert.equal(calls, 2);
+    now += 1;
+    await market.getExecutionQuote('BTCUSD');
+    assert.equal(calls, 3);
+    now = NOW + 29999;
+    await market.getExecutionQuote('GBPUSD');
+    assert.equal(calls, 3);
+    now += 1;
+    await market.getExecutionQuote('GBPUSD');
+    assert.equal(calls, 4);
+  } finally { market.close(); }
+});
+
+test('closing execution data aborts an in-flight ticker, and execution timeouts remain bounded', async () => {
+  let aborted = 0;
+  const market = createMarketData({ fetchFn: async (url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => { aborted++; reject(new Error('Aborted')); }, { once: true })) });
+  const pending = market.getExecutionQuote('BTCUSD');
+  market.close();
+  await assert.rejects(pending, error => error.status === 503);
+  await assert.rejects(market.getExecutionQuote('BTCUSD'), error => error.status === 503);
+  assert.equal(aborted, 1);
+  const stalled = createMarketData({ timeoutMs: 20, fetchFn: async () => new Promise(() => {}) });
+  try { await assert.rejects(stalled.getExecutionQuote('BTCUSD'), error => error.status === 503); }
+  finally { stalled.close(); }
+  const cached = createMarketData({ now: () => NOW, fetchFn: async () => response(ticker) });
+  await cached.getExecutionQuote('BTCUSD');
+  const cachedRead = cached.getExecutionQuote('BTCUSD');
+  cached.close();
+  await assert.rejects(cachedRead, error => error.status === 503);
 });

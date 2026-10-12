@@ -11,7 +11,10 @@ On Windows, these commands work in PowerShell or the VS Code terminal.
 Use npm start rather than the VS Code Live Server extension: this website
 includes a Node.js backend for registration, trading, and certificates.
 
-Register a new account to try the trading dashboard. Cloud-instance users
+Register a new account to try the trading dashboard. Crypto demo fills use fresh
+Coinbase reference prices; intraday forex fills need a configured Twelve Data key.
+Missing or stale quotes pause trading. Earlier demo accounts can start a new
+reference-priced attempt using Reset demo, with previous records preserved. Cloud-instance users
 and secrets are excluded from this export. Your laptop creates its own
 private data folder. Email and background push need additional configuration;
 in-page popup notifications work without provider credentials.

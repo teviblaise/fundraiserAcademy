@@ -114,7 +114,7 @@ test('operator publications validate document format, preserve immutable version
 test('contract HTTP endpoints enforce login, qualification, consent, exact version, and durable signatures after practice reset', async () => {
   const folder=await mkdtemp(path.join(tmpdir(),'fa-contract-api-'));
   const database=path.join(folder,'academy.sqlite');
-  let backend=createBackend(database);
+  let backend=createBackend(database,{autoTick:false});
   const server=http.createServer((req,res)=>backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${server.address().port}`;
@@ -137,7 +137,7 @@ test('contract HTTP endpoints enforce login, qualification, consent, exact versi
     const state=JSON.parse(privateDb.prepare('SELECT state FROM accounts WHERE user_id=?').get(first.body.user.id).state);
     state.balance=11000;state.positions=[];state.locked='Profit target achieved';state.tradingDays=['2026-10-09','2026-10-10','2026-10-11'];
     privateDb.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(state),first.body.user.id);
-    backend.close();backend=createBackend(database);
+    await backend.close();backend=createBackend(database,{autoTick:false});
     const ready=await request('/api/contract',undefined,first.cookie);
     assert.equal(ready.body.status,'signature_required');
     const document=await fetch(origin+published.documentUrl,{headers:{Cookie:first.cookie}});
@@ -149,7 +149,7 @@ test('contract HTTP endpoints enforce login, qualification, consent, exact versi
     assert.equal(signed.status,200);assert.equal(signed.body.status,'signed');
     assert.equal((await request('/api/contract/sign',signature(published),second.cookie)).status,403);
     await request('/api/account/reset',{},first.cookie);
-    backend.close();backend=createBackend(database);
+    await backend.close();backend=createBackend(database,{autoTick:false});
     const afterReset=await request('/api/contract',undefined,first.cookie);
     assert.equal(afterReset.body.status,'signed');assert.equal(afterReset.body.signature.id,signed.body.signature.id);
     assert.equal(afterReset.body.fundingApproved,false);
@@ -157,5 +157,5 @@ test('contract HTTP endpoints enforce login, qualification, consent, exact versi
     contracts.publish({...publication('v2'),content:Buffer.from('Updated terms supplied by operator')});
     assert.equal((await request('/api/contract',undefined,first.cookie)).body.status,'signature_required');
     assert.equal((await request('/api/contract/sign',signature(published),first.cookie)).status,409);
-  } finally {await new Promise(resolve=>server.close(resolve));backend.close();privateDb?.close();await rm(folder,{recursive:true,force:true});}
+  } finally {await new Promise(resolve=>server.close(resolve));await backend.close();privateDb?.close();await rm(folder,{recursive:true,force:true});}
 });

@@ -8,6 +8,7 @@ const SYMBOLS = Object.freeze({
 const SOURCES = Object.freeze({
   coinbase: { name: 'Coinbase Exchange', url: 'https://www.coinbase.com/advanced-trade', delayed: false },
   frankfurter: { name: 'Frankfurter / ECB daily reference', url: 'https://www.frankfurter.dev/', delayed: true },
+  twelvedata: { name: 'Twelve Data', url: 'https://twelvedata.com/', delayed: false },
 });
 
 export class MarketDataError extends Error {
@@ -68,14 +69,18 @@ function normalizePoints(payload, base, start, end) {
   return points.slice(-300);
 }
 
-/** Public reference prices are separate from the academy's simulated execution prices. */
-export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, cryptoTtlMs = 30000, fxTtlMs = 3600000, timeoutMs = 8000, maxEntries = 64, errorBackoffMs = 30000 } = {}) {
+/** Executions use fresh provider quotes; historical and daily references are never executable. */
+export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, cryptoTtlMs = 30000, fxTtlMs = 3600000, executionCryptoTtlMs = 5000, executionFxTtlMs = 30000, twelveDataApiKey = process.env.TWELVE_DATA_API_KEY, timeoutMs = 8000, maxEntries = 64, errorBackoffMs = 30000 } = {}) {
   if (typeof fetchFn !== 'function' || typeof now !== 'function') throw new TypeError('A fetch function and clock are required');
-  if (![cryptoTtlMs, fxTtlMs, timeoutMs, maxEntries, errorBackoffMs].every(value => Number.isFinite(value) && value > 0)) throw new TypeError('Market cache settings must be positive');
+  if (![cryptoTtlMs, fxTtlMs, executionCryptoTtlMs, executionFxTtlMs, timeoutMs, maxEntries, errorBackoffMs].every(value => Number.isFinite(value) && value > 0)) throw new TypeError('Market cache settings must be positive');
+  executionCryptoTtlMs = Math.min(executionCryptoTtlMs, 5000);
+  executionFxTtlMs = Math.min(executionFxTtlMs, 30000);
+  const fxApiKey = typeof twelveDataApiKey === 'string' ? twelveDataApiKey.trim() : '';
   timeoutMs = Math.min(timeoutMs, 8000);
   maxEntries = Math.min(Math.floor(maxEntries), 64);
   if (maxEntries < 1) throw new TypeError('At least one cache entry is required');
   const cache = new Map(), pending = new Map(), cooldown = new Map(), controllers = new Set();
+  const executionCache = new Map(), executionPending = new Map(), executionCooldown = new Map();
   let closed = false;
 
   function unavailable(provider) {
@@ -83,8 +88,9 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
   }
 
   function copy(value, cached = false, stale = false, historical = false) {
-    const quoteAged = !historical && value.kind === 'ohlc' && Math.floor(now() / 1000) - value.asOf > 120;
-    return { ...structuredClone(value), status: cached ? 'cached' : 'ok', stale: value.stale || stale || quoteAged };
+    const quoteAged = !historical && value.quoteKind !== 'daily-reference' && !freshQuote(value);
+    const isStale = Boolean(value.stale || stale || quoteAged);
+    return { ...structuredClone(value), status: cached ? 'cached' : 'ok', stale: isStale, executable: !historical && !isStale && value.executable === true };
   }
 
   function touch(key, entry) {
@@ -99,27 +105,128 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     return response.json();
   }
 
+  function freshQuote(value) {
+    const clock = now();
+    return value && Number.isFinite(value.price) && value.price > 0 && Number.isSafeInteger(value.asOf) && value.asOf > 0 &&
+      value.asOf * 1000 <= clock + 60000 && clock - value.asOf * 1000 <= 120000 &&
+      Number.isFinite(value.fetchedAt) && value.fetchedAt <= clock + 1000 && clock - value.fetchedAt <= 30000;
+  }
+
+  function forexClosed(clock) {
+    const date = new Date(clock), day = date.getUTCDay(), hour = date.getUTCHours();
+    return day === 6 || (day === 0 && hour < 22) || (day === 5 && hour >= 22);
+  }
+
+  async function loadExecutionQuote(symbol, signal) {
+    const spec = SYMBOLS[symbol];
+    let price, asOf, provider;
+    if (spec.provider === 'coinbase') {
+      provider = 'coinbase';
+      const payload = await json(`https://api.exchange.coinbase.com/products/${spec.product}/ticker`, signal);
+      price = number(payload?.price);
+      if (typeof payload?.time !== 'string') throw new Error('Invalid ticker timestamp');
+      asOf = Math.floor(Date.parse(payload.time) / 1000);
+    } else {
+      provider = 'twelvedata';
+      // The authenticated request URL and provider error body never reach logs or API errors.
+      const pair = `${spec.base}/USD`;
+      const query = new URLSearchParams({ symbol: pair, apikey: fxApiKey });
+      const payload = await json(`https://api.twelvedata.com/quote?${query}`, signal);
+      if (!payload || payload.status === 'error' || (payload.symbol && payload.symbol !== pair)) throw new Error('Invalid intraday reference');
+      if (payload.is_market_open === false || payload.is_market_open === 'false' || forexClosed(now())) throw new MarketDataError('The forex market is closed. Demo orders are paused until fresh market quotes resume.');
+      price = number(payload.close);
+      asOf = seconds(payload.timestamp);
+    }
+    if (!Number.isSafeInteger(asOf) || asOf <= 0 || asOf > Math.floor(now() / 1000) + 60) throw new Error('Invalid quote timestamp');
+    const source = SOURCES[provider];
+    return { symbol, price, asOf, fetchedAt: now(), source: source.name, sourceUrl: source.url };
+  }
+
+  async function quote(symbol) {
+    if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose EURUSD, GBPUSD, BTCUSD, or ETHUSD.', 400);
+    const provider = SYMBOLS[symbol].provider === 'coinbase' ? 'coinbase' : 'twelvedata';
+    if (closed) throw unavailable(provider);
+    if (provider === 'twelvedata' && !fxApiKey) throw new MarketDataError('Live forex demo fills need a configured Twelve Data API key. ECB daily reference prices cannot execute trades.');
+    if (provider === 'twelvedata' && forexClosed(now())) throw new MarketDataError('The forex market is closed. Demo orders are paused until fresh market quotes resume.');
+    const entry = executionCache.get(symbol);
+    if (entry && entry.expires > now()) return structuredClone(entry.value);
+    if (executionPending.has(symbol)) return structuredClone(await executionPending.get(symbol));
+    if ((executionCooldown.get(provider) || 0) > now()) throw unavailable(provider);
+    const controller = new AbortController();
+    controllers.add(controller);
+    let timer;
+    const deadline = new Promise((resolve, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(unavailable(provider)); }, timeoutMs);
+      controller.signal.addEventListener('abort', () => reject(unavailable(provider)), { once: true });
+    });
+    const operation = (async () => {
+      try {
+        const value = await Promise.race([loadExecutionQuote(symbol, controller.signal), deadline]);
+        if (closed) throw unavailable(provider);
+        executionCache.set(symbol, { value, expires: now() + (provider === 'coinbase' ? executionCryptoTtlMs : executionFxTtlMs) });
+        executionCooldown.delete(provider);
+        return value;
+      } catch (error) {
+        controller.abort();
+        if (!closed) executionCooldown.set(provider, now() + errorBackoffMs);
+        if (error instanceof MarketDataError) throw error;
+        throw unavailable(provider);
+      } finally {
+        clearTimeout(timer);
+        controllers.delete(controller);
+        executionPending.delete(symbol);
+      }
+    })();
+    executionPending.set(symbol, operation);
+    return structuredClone(await operation);
+  }
+
+  async function getExecutionQuote(symbol) {
+    const value = await quote(symbol);
+    if (closed) throw new MarketDataError('Market prices are unavailable because the market connection is closed.');
+    if (!freshQuote(value)) throw new MarketDataError(`${value.source} returned a stale quote. Demo orders are paused until a fresh reference price is available.`);
+    return { ...value, executable: true };
+  }
+
+  async function chartCopy(value, cached = false, stale = false, historical = false) {
+    if (historical || value.quoteKind === 'daily-reference' && !fxApiKey) return copy(value, cached, stale, historical);
+    const crypto = SYMBOLS[value.symbol].provider === 'coinbase';
+    try {
+      // Keep candle/history caching separate from quote caching so the displayed
+      // latest reference and demo execution use the same provider quote.
+      const latest = crypto ? await quote(value.symbol) : await getExecutionQuote(value.symbol);
+      return copy({ ...value, ...latest, quoteKind: crypto ? 'last-trade' : 'intraday', stale: !freshQuote(latest), executable: freshQuote(latest), delayed: false }, cached, false);
+    } catch {
+      if (!crypto && value.points.length) {
+        const latest = value.points.at(-1), daily = SOURCES.frankfurter;
+        return copy({ ...value, price: latest.close, asOf: latest.time, source: daily.name, sourceUrl: daily.url, quoteKind: 'daily-reference', executable: false, stale: false, delayed: true }, cached, false);
+      }
+      return copy(value, true, true);
+    }
+  }
+
   async function load(symbol, interval, requestedEnd, signal) {
-    const spec = SYMBOLS[symbol], source = SOURCES[spec.provider];
+    const spec = SYMBOLS[symbol];
+    let source = SOURCES[spec.provider];
     const currentTime = Math.floor(now() / 1000);
     const end = requestedEnd === undefined ? currentTime : Math.min(requestedEnd, currentTime);
     const historical = requestedEnd !== undefined;
-    let price, asOf, candles = [], points = [];
+    let price, asOf, quoteFetchedAt, executable = false, quoteKind = spec.provider === 'coinbase' ? 'last-trade' : 'daily-reference', candles = [], points = [];
     if (spec.provider === 'coinbase') {
       const start = Math.max(1, end - INTERVALS[interval] * 300);
       const query = new URLSearchParams({ granularity: String(INTERVALS[interval]), start: new Date(start * 1000).toISOString(), end: new Date(end * 1000).toISOString() });
       const url = `https://api.exchange.coinbase.com/products/${spec.product}`;
-      const [history, ticker] = await Promise.all([json(`${url}/candles?${query}`, signal), historical ? null : json(`${url}/ticker`, signal)]);
+      const [history, ticker] = await Promise.all([json(`${url}/candles?${query}`, signal), historical ? null : quote(symbol)]);
       candles = normalizeCandles(history, start, end);
       const last = candles.at(-1);
       if (historical) {
         price = last.close;
         asOf = last.time;
       } else {
-        price = number(ticker?.price);
-        if (typeof ticker.time !== 'string') throw new Error('Invalid ticker timestamp');
-        asOf = Math.floor(Date.parse(ticker.time) / 1000);
-        if (!Number.isSafeInteger(asOf) || asOf <= 0 || asOf > currentTime + 60) throw new Error('Invalid ticker timestamp');
+        price = ticker.price;
+        asOf = ticker.asOf;
+        quoteFetchedAt = ticker.fetchedAt;
+        executable = freshQuote(ticker);
       }
     } else {
       const endDay = Math.floor(end / 86400) * 86400;
@@ -144,9 +251,20 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
           else points[points.length - 1] = { time: latestTime, close: latestPrice };
           points = points.slice(-300);
         }
+        if (fxApiKey) {
+          try {
+            const live = await getExecutionQuote(symbol);
+            price = live.price;
+            asOf = live.asOf;
+            quoteFetchedAt = live.fetchedAt;
+            source = SOURCES.twelvedata;
+            quoteKind = 'intraday';
+            executable = true;
+          } catch { /* Daily references remain chart history only when the live source is unavailable. */ }
+        }
       }
     }
-    return { symbol, source: source.name, sourceUrl: source.url, kind: spec.provider === 'coinbase' ? 'ohlc' : 'daily', price, asOf, fetchedAt: now(), stale: !historical && spec.provider === 'coinbase' && currentTime - asOf > 120, interval, candles, points, status: 'ok', delayed: source.delayed };
+    return { symbol, source: source.name, sourceUrl: source.url, kind: spec.provider === 'coinbase' ? 'ohlc' : 'daily', quoteKind, executable, historySource: SOURCES[spec.provider].name, price, asOf, fetchedAt: quoteFetchedAt ?? now(), stale: !historical && spec.provider === 'coinbase' && !executable, interval, candles, points, status: 'ok', delayed: source.delayed };
   }
 
   async function get(symbol, interval = '15m', end = undefined) {
@@ -160,14 +278,14 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     const entry = cache.get(key);
     if (entry && entry.expires > now()) {
       touch(key, entry);
-      return copy(entry.value, true, false, end !== undefined);
+      return chartCopy(entry.value, true, false, end !== undefined);
     }
     if (pending.has(key)) {
       const value = await pending.get(key);
-      return copy(value, value.status === 'cached', false, end !== undefined);
+      return chartCopy(value, value.status === 'cached', false, end !== undefined);
     }
     if ((cooldown.get(provider) || 0) > now()) {
-      if (entry) return copy(entry.value, true, true, end !== undefined);
+      if (entry) return chartCopy(entry.value, true, true, end !== undefined);
       throw unavailable(provider);
     }
     if (pending.size >= maxEntries) throw new MarketDataError('Market reference requests are busy. Try again shortly.');
@@ -198,8 +316,8 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     })();
     pending.set(key, operation);
     const value = await operation;
-    return copy(value, value.status === 'cached', false, end !== undefined);
+    return chartCopy(value, value.status === 'cached', false, end !== undefined);
   }
 
-  return { get, close() { closed = true; for (const controller of controllers) controller.abort(); cache.clear(); } };
+  return { get, getExecutionQuote, close() { closed = true; for (const controller of controllers) controller.abort(); cache.clear(); executionCache.clear(); } };
 }
