@@ -1,9 +1,13 @@
 import { MARKETS, quote, quoteIsExecutable, marketDependencies, rawQuoteFresh, pnl, metrics } from './simulator.js';
 import {showContractNextStep} from './contract-status.js';
 import {createMarketReference} from './market-reference.js';
+import {createAccountFeed, createAccountOrderGuard} from './account-feed.js';
 
 const $ = id => document.getElementById(id);
 let account;
+const accountOrderGuard = createAccountOrderGuard();
+let accountFeed = null;
+let accountDelivery = 'connecting';
 let traderId;
 let selected = 'EURUSD';
 let pushSubscribed=false;
@@ -15,9 +19,18 @@ let orderSubmitting=false;
 let orderFeedback=null;
 const money = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
 const price = (symbol, value) => Number.isFinite(value) ? value.toFixed(MARKETS[symbol].decimals) : '—';
+const lotSize = symbol => MARKETS[symbol].lotSize ?? (MARKETS[symbol].category === 'Forex' ? 100000 : 1);
+const lotVolume = trade => new Intl.NumberFormat('en-US', { maximumFractionDigits:10 }).format(trade.lots ?? trade.quantity / (trade.lotSize ?? lotSize(trade.symbol)));
 const color = value => !Number.isFinite(value) ? 'text-muted' : value < 0 ? 'text-red-400' : 'text-lime';
 const quoteTime = value => Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC' }).format(value) + ' UTC' : 'awaiting quote';
 const message = text => { $('dashboard-message').textContent = text; };
+function applyAccount(next) {
+  if (!accountOrderGuard.accept(next)) return false;
+  const previous = account?.locked;
+  account = next;
+  if (previous !== undefined && account.locked && account.locked !== previous) message(account.locked === 'Profit target achieved' ? 'Practice challenge passed: 10% realized profit with no open positions.' : `${account.locked} reached. Positions closed and new trades locked.`);
+  return true;
+}
 function orderMessage(text, state) {
   orderFeedback = {text, state};
   renderOrderStatus();
@@ -49,14 +62,14 @@ async function api(endpoint, data) {
 try {
   const result = await api('/api/me');
   traderId=result.user.id;
-  account = (await api('/api/account')).account;
+  applyAccount((await api('/api/account')).account);
   $('trader-name').textContent = `Welcome, ${result.user.name}. Your practice account is saved on the server.`;
   document.querySelector('main').hidden = false;
 } catch (error) {
   if (!account) { window.location.replace('/login.html'); await new Promise(() => {}); }
 }
 const marketReference=createMarketReference($('real-market-reference'),selected,traderId);
-$('sign-out').addEventListener('click', async () => { try { const subscription=await workerRegistration?.pushManager.getSubscription(); await api('/api/logout', {endpoint:subscription?.endpoint}); if(subscription)await subscription.unsubscribe(); window.location.assign('/login.html'); } catch(error) { message(error.message); } });
+$('sign-out').addEventListener('click', async () => { accountFeed?.stop(); try { const subscription=await workerRegistration?.pushManager.getSubscription(); await api('/api/logout', {endpoint:subscription?.endpoint}); if(subscription)await subscription.unsubscribe(); window.location.assign('/login.html'); } catch(error) { message(error.message); startAccountFeed(); } });
 for (const category of [...new Set(Object.values(MARKETS).map(market => market.category))]) {
   const markets = Object.entries(MARKETS).filter(([, market]) => market.category === category);
   const options = document.createElement('optgroup'); options.label = category;
@@ -88,8 +101,9 @@ function selectMarket(symbol) {
   orderFeedback = null;
   selected = symbol; $('symbol').value = symbol;
   marketReference.selectSymbol(symbol);
-  $('quantity').value = MARKETS[symbol].category === 'Forex' ? '10000' : symbol === 'BTCUSD' ? '0.01' : '0.1';
+  $('quantity').value = MARKETS[symbol].defaultLots ?? (MARKETS[symbol].category === 'Forex' ? '0.1' : symbol === 'BTCUSD' ? '0.01' : '0.1');
   $('limit-price').value = ''; $('stop-loss').value = ''; $('take-profit').value = ''; render();
+  accountFeed?.selectSymbol();
   void tick();
 }
 
@@ -110,8 +124,10 @@ function renderExecutionState(m = metrics(account)) {
   $('ask-price').textContent = ready ? price(selected, q.ask) : '—';
   $('feed-dot').classList.toggle('bg-lime', ready);
   $('feed-dot').classList.toggle('bg-amber-400', !ready);
-  $('feed-status').textContent = account.migrationRequired ? 'Previous attempt · start a reference-priced account' : `${MARKETS[selected].label} · ${ready ? 'Reference execution active' : 'Reference execution paused'}`;
-  $('tick-count').textContent = q.source ? `Source: ${q.source}` : 'Awaiting provider';
+  const quoteDelivery = q.deliveryMode === 'streaming' ? 'Streaming quotes' : q.deliveryMode === 'polling' ? 'Periodic quotes' : 'Reference quotes';
+  $('feed-status').textContent = account.migrationRequired ? 'Previous attempt · start a reference-priced account' : `${MARKETS[selected].label} · ${quoteDelivery} · ${ready ? 'Active' : 'Paused'}`;
+  const accountUpdates = accountDelivery === 'live' ? 'Live account updates' : accountDelivery === 'polling' ? 'Periodic account updates' : accountDelivery === 'connecting' ? 'Connecting live updates' : 'Updates paused';
+  $('tick-count').textContent = `${q.source ? `Source: ${q.source}` : 'Awaiting provider'} · ${accountUpdates}`;
   $('execution-quote-status').textContent = account.migrationRequired
     ? 'Start a reference-priced attempt with Reset demo. Your previous attempt is preserved in the server audit record.'
     : ready
@@ -132,7 +148,7 @@ function renderExecutionState(m = metrics(account)) {
 }
 
 function estimate() {
-  const quantity = Number($('quantity').value);
+  const quantity = Number($('quantity').value) * lotSize(selected);
   const market = MARKETS[selected];
   if (!executionReady() || metrics(account).executionReady === false) {
     $('order-estimate').textContent = 'Fresh reference prices and any required USD conversions are needed before margin can be checked and an order can fill.';
@@ -142,7 +158,7 @@ function estimate() {
   const usdRate = market.quoteCurrency === 'USD' ? 1 : q.usdRate;
   const entry = $('side').value === 'buy' ? q.ask : q.bid;
   const plannedEntry = $('order-type').value === 'limit' && Number($('limit-price').value) > 0 ? Number($('limit-price').value) : entry;
-  $('order-estimate').textContent = Number.isFinite(quantity) && quantity > 0 ? `Estimated margin: ${money(plannedEntry * quantity * usdRate / market.leverage)} · No added spread · ${market.leverage}:1 demo leverage` : 'Enter a positive quantity.';
+  $('order-estimate').textContent = Number.isFinite(quantity) && quantity > 0 ? `Estimated margin: ${money(plannedEntry * quantity * usdRate / market.leverage)} · No added spread · ${market.leverage}:1 demo leverage` : 'Enter a positive lot volume.';
 }
 
 function row(cells) {
@@ -160,7 +176,7 @@ function renderTables() {
   if (!account.positions.length) $('positions').append(emptyRow('No open positions. Place a demo trade to get started.', 6));
   for (const position of account.positions) {
     const close = document.createElement('button'); close.className = 'desk-action'; close.textContent = 'Close'; close.dataset.executionSymbol = position.symbol; close.disabled = !executionReady(position.symbol); close.setAttribute('aria-label', `Close ${position.symbol} position ${position.id}`);
-    close.addEventListener('click', async () => { close.disabled = true; try { account = (await api('/api/trades/close', {id:position.id})).account; message(`Position #${position.id} closed at the verified reference. Realized result: ${money(account.history[0].profit)}.`); render(); } catch(error) { message(error.message); await tick(); renderExecutionState(); } });
+    close.addEventListener('click', async () => { close.disabled = true; try { const result = await api('/api/trades/close', {id:position.id}); applyAccount(result.account); message(`Position #${position.id} closed at the verified reference. Realized result: ${money(result.account.history.find(trade=>trade.id===position.id)?.profit)}.`); render(); } catch(error) { message(error.message); await tick(); renderExecutionState(); } });
     const actions=document.createElement('div'); actions.className='flex gap-2';
     const edit=document.createElement('button'); edit.className='desk-action'; edit.textContent='Edit SL/TP'; edit.dataset.executionSymbol=position.symbol; edit.disabled=!executionReady(position.symbol);
     edit.addEventListener('click',()=>{ editingPosition=position.id; $('protection-title').textContent=`${position.symbol} #${position.id} protection`; $('edit-stop').value=position.stopLoss??''; $('edit-target').value=position.takeProfit??''; $('protection-status').textContent=''; $('protection-dialog').showModal(); renderExecutionState(); });
@@ -168,11 +184,11 @@ function renderTables() {
     const floating = account.migrationRequired ? null : pnl(account, position);
     const floatingNode = resultNode(floating);
     if (!executionReady(position.symbol) && Number.isFinite(floating)) { floatingNode.append(' · last reference'); floatingNode.className = 'text-muted'; }
-    $('positions').append(row([`${position.symbol} · ${position.side.toUpperCase()}`, position.quantity, price(position.symbol, position.entry), `${position.stopLoss === null ? '—' : price(position.symbol, position.stopLoss)} / ${position.takeProfit === null ? '—' : price(position.symbol, position.takeProfit)}`, floatingNode, actions]));
+    $('positions').append(row([`${position.symbol} · ${position.side.toUpperCase()}`, lotVolume(position), price(position.symbol, position.entry), `${position.stopLoss === null ? '—' : price(position.symbol, position.stopLoss)} / ${position.takeProfit === null ? '—' : price(position.symbol, position.takeProfit)}`, floatingNode, actions]));
   }
-  if (!account.history.length) $('journal').append(emptyRow('Closed trades will appear here.', 5));
-  for (const trade of account.history.slice(0, 200)) $('journal').append(row([`${trade.symbol} · ${trade.side.toUpperCase()}`, `${price(trade.symbol, trade.entry)} → ${price(trade.symbol, trade.exit)}`, resultNode(trade.profit), new Date(trade.closedAt).toLocaleString(), trade.reason]));
-  if (account.history.length > 200) $('journal').append(emptyRow('Showing the latest 200 trades. Export for the full journal.', 5));
+  if (!account.history.length) $('journal').append(emptyRow('Closed trades will appear here.', 6));
+  for (const trade of account.history.slice(0, 200)) $('journal').append(row([`${trade.symbol} · ${trade.side.toUpperCase()}`, lotVolume(trade), `${price(trade.symbol, trade.entry)} → ${price(trade.symbol, trade.exit)}`, resultNode(trade.profit), new Date(trade.closedAt).toLocaleString(), trade.reason]));
+  if (account.history.length > 200) $('journal').append(emptyRow('Showing the latest 200 trades. Export for the full journal.', 6));
 }
 
 function render() {
@@ -183,7 +199,11 @@ function render() {
   $('net').className = `metric-value ${valued ? color(m.net) : 'text-muted'}`;
   $('floating').textContent = account.migrationRequired ? 'Previous attempt · read only' : !valued ? 'Waiting for reference valuations' : `${money(m.floating)} floating P&L${m.executionReady === false ? ' · last reference, awaiting fresh prices' : ''}`; $('floating').className = `text-xs ${m.executionReady === false ? 'text-muted' : color(valued ? m.floating : null)}`;
   $('used-margin').textContent = `${money(m.margin)} margin used`;
-  $('quantity-label').textContent = `Quantity (${market.unit})`;
+  $('quantity-label').textContent = 'Volume (lots)';
+  $('quantity').min = market.lotStep ?? (market.category === 'Forex' ? '0.01' : '0.001');
+  $('quantity').step = market.lotStep ?? (market.category === 'Forex' ? '0.01' : '0.001');
+  $('quantity').max = market.maxLots ?? 1000;
+  $('lot-size-note').textContent = `1 lot = ${lotSize(selected).toLocaleString('en-US')} ${market.baseCurrency}${market.category === 'Forex' ? ' units' : ''}.`;
   $('ticket-price-unit').textContent = `Prices in ${market.quoteCurrency} per ${market.baseCurrency}`;
   const conversionNote = $('quote-currency-note'); conversionNote.hidden = market.quoteCurrency === 'USD';
   conversionNote.textContent = `Prices are in ${market.quoteCurrency}; margin, profit or loss, and risk limits are converted to USD using a fresh reference rate.`;
@@ -224,8 +244,8 @@ $('order-form').addEventListener('submit', async event => {
   $('submit-order').textContent = isLimit ? 'Placing limit order…' : 'Placing demo trade…';
   orderMessage('Checking the reference price and your risk limits…', 'pending');
   try {
-    const result = await api(isLimit?'/api/orders':'/api/trades', { symbol:selected, side:$('side').value, quantity:Number($('quantity').value), limitPrice:isLimit?Number($('limit-price').value):undefined, stopLoss:$('stop-loss').value === '' ? null : Number($('stop-loss').value), takeProfit:$('take-profit').value === '' ? null : Number($('take-profit').value) });
-    account = result.account;
+    const result = await api(isLimit?'/api/orders':'/api/trades', { symbol:selected, side:$('side').value, lots:Number($('quantity').value), limitPrice:isLimit?Number($('limit-price').value):undefined, stopLoss:$('stop-loss').value === '' ? null : Number($('stop-loss').value), takeProfit:$('take-profit').value === '' ? null : Number($('take-profit').value) });
+    applyAccount(result.account);
     const outcome = isLimit?'Limit order queued. It will execute at a fresh reference price at your limit or better, subject to server risk checks.':'Demo order filled at the server-verified reference price. No real money was used.';
     message(outcome); orderMessage(outcome, 'success');
   } catch(error) { message(error.message); orderMessage(error.message, 'error'); $('order-status').scrollIntoView({block:'nearest',inline:'nearest'}); await tick(); }
@@ -236,10 +256,7 @@ let polling = false;
 async function tick() {
   if (polling) return; polling = true;
   try {
-    const previous = account.locked;
-    account = (await api(`/api/account?symbol=${encodeURIComponent(selected)}`)).account;
-    if (account.locked && account.locked !== previous) message(account.locked === 'Profit target achieved' ? 'Practice challenge passed: 10% realized profit with no open positions.' : `${account.locked} reached. Positions closed and new trades locked.`);
-    render();
+    if (applyAccount((await api(`/api/account?symbol=${encodeURIComponent(selected)}`)).account)) render();
   } catch(error) { message(error.message); }
   finally { polling = false; }
 }
@@ -248,7 +265,7 @@ $('reset-account').addEventListener('click', () => $('reset-dialog').showModal()
 $('cancel-reset').addEventListener('click', () => $('reset-dialog').close());
 $('confirm-reset').addEventListener('click', async () => {
   $('confirm-reset').disabled = true;
-  try { const result = await api('/api/account/reset', {}); account=result.account; seenNotifications.clear(); initialiseLimits(); selectMarket(selected); $('reset-dialog').close(); message(result.message); }
+  try { const result = await api('/api/account/reset', {}); applyAccount(result.account); seenNotifications.clear(); initialiseLimits(); selectMarket(selected); $('reset-dialog').close(); message(result.message); }
   catch(error) { message(error.message); }
   finally { $('confirm-reset').disabled=false; }
 });
@@ -261,7 +278,7 @@ $('export-journal').addEventListener('click', async () => {
   } catch(error) { message(error.message); }
 });
 async function toolAction(endpoint,data,success) {
-  const result=await api(endpoint,data); account=result.account; if(success) message(success); render();
+  const result=await api(endpoint,data); applyAccount(result.account); if(success) message(success); render();
 }
 function renderTools() {
   $('pending-orders').replaceChildren();
@@ -269,7 +286,7 @@ function renderTools() {
   for(const order of account.pending) {
     const cancel=document.createElement('button'); cancel.className='desk-action'; cancel.textContent='Cancel order';
     cancel.addEventListener('click',async()=>{try{await toolAction('/api/orders/cancel',{id:order.id},'Limit order cancelled.');}catch(e){message(e.message);}});
-    $('pending-orders').append(row([`${order.symbol} · ${order.side.toUpperCase()}`,order.quantity,price(order.symbol,order.limitPrice),`${order.stopLoss === null ? '—' : price(order.symbol,order.stopLoss)} / ${order.takeProfit === null ? '—' : price(order.symbol,order.takeProfit)}`,cancel]));
+    $('pending-orders').append(row([`${order.symbol} · ${order.side.toUpperCase()}`,lotVolume(order),price(order.symbol,order.limitPrice),`${order.stopLoss === null ? '—' : price(order.symbol,order.stopLoss)} / ${order.takeProfit === null ? '—' : price(order.symbol,order.takeProfit)}`,cancel]));
   }
   $('alerts-list').replaceChildren();
   if(!account.alerts.length) { const p=document.createElement('p'); p.className='text-xs text-muted'; p.textContent='No price alerts yet.'; $('alerts-list').append(p); }
@@ -334,10 +351,20 @@ $('enable-email').addEventListener('click',async()=>{try{if(!notificationSetting
 $('disable-email').addEventListener('click',async()=>{try{notificationSettings=await api('/api/email/preferences',{enabled:false});displayDeliverySettings();message('Email alerts disabled.');}catch(error){message(error.message);}});
 checkedPassedAttempt=account.locked==='Profit target achieved'?account.notificationEpoch:null;
 render();
-setInterval(() => { if(!document.hidden) tick(); },1500);
+function startAccountFeed() {
+  accountFeed?.stop();
+  accountFeed = createAccountFeed({
+    getSymbol: () => selected,
+    onAccount: next => { if (applyAccount(next)) render(); },
+    onStatus: state => { accountDelivery = state; renderExecutionState(); },
+    onUnauthorized: () => window.location.replace('/login.html'),
+    poll: tick,
+  });
+  accountFeed.start();
+}
+startAccountFeed();
 setInterval(() => { if(!document.hidden) { renderExecutionState(); estimate(); } },1000);
 setInterval(()=>{if(!document.hidden)void refreshDeliverySettings().catch(()=>{});},15000);
-document.addEventListener('visibilitychange', () => { if(!document.hidden) tick(); });
 // Optional delivery setup must not delay quote checks, order handling or polling.
 void initialiseBackgroundPush();
 void refreshDeliverySettings().catch(error=>message(error.message));

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { createMarketData, MarketDataError } from '../market-data.mjs';
 
 const NOW = Date.parse('2026-10-12T12:00:00Z');
@@ -221,7 +222,7 @@ test('execution quotes use the exact last-trade reference without fetching candl
   const market = createMarketData({ now: () => NOW, fetchFn: async url => { calls.push(url); assert.match(url, /\/products\/BTC-USD\/ticker$/); return response(ticker); } });
   try {
     const value = await market.getExecutionQuote('BTCUSD');
-    assert.deepEqual(value, { symbol: 'BTCUSD', baseCurrency: 'BTC', quoteCurrency: 'USD', price: 111.25, asOf: SECOND - 2, fetchedAt: NOW, source: 'Coinbase Exchange', sourceUrl: 'https://www.coinbase.com/advanced-trade', executable: true });
+    assert.deepEqual(value, { symbol: 'BTCUSD', baseCurrency: 'BTC', quoteCurrency: 'USD', price: 111.25, asOf: SECOND - 2, fetchedAt: NOW, source: 'Coinbase Exchange', sourceUrl: 'https://www.coinbase.com/advanced-trade', deliveryMode: 'polling', executable: true });
     value.price = 0;
     assert.equal((await market.getExecutionQuote('BTCUSD')).price, 111.25);
     assert.equal(calls.length, 1);
@@ -319,7 +320,7 @@ test('configured forex uses the exact intraday close and timestamp; API credenti
   const market = createMarketData({ now: () => NOW, twelveDataApiKey: 'test-private-key', fetchFn: async url => { calls.push(url); return response({ symbol: 'EUR/USD', close: '1.167385', timestamp: SECOND - 20, is_market_open: true }); } });
   try {
     const value = await market.getExecutionQuote('EURUSD');
-    assert.deepEqual(value, { symbol: 'EURUSD', baseCurrency: 'EUR', quoteCurrency: 'USD', price: 1.167385, asOf: SECOND - 20, fetchedAt: NOW, source: 'Twelve Data', sourceUrl: 'https://twelvedata.com/', executable: true });
+    assert.deepEqual(value, { symbol: 'EURUSD', baseCurrency: 'EUR', quoteCurrency: 'USD', price: 1.167385, asOf: SECOND - 20, fetchedAt: NOW, source: 'Twelve Data', sourceUrl: 'https://twelvedata.com/', deliveryMode: 'polling', executable: true });
     assert.equal(calls.length, 1);
     const request = new URL(calls[0]);
     assert.equal(request.origin, 'https://api.twelvedata.com');
@@ -599,4 +600,209 @@ test('closing execution data aborts an in-flight ticker, and execution timeouts 
   const cachedRead = cached.getExecutionQuote('BTCUSD');
   cached.close();
   await assert.rejects(cachedRead, error => error.status === 503);
+});
+
+class FakePriceSocket extends EventEmitter {
+  readyState = 0;
+  sent = [];
+  open() { this.readyState = 1; this.emit('open'); }
+  send(value) { this.sent.push(JSON.parse(value)); }
+  tick(price, time = NOW, sequence = 1, product = 'BTC-USD') { this.emit('message', JSON.stringify({ type: 'ticker', product_id: product, price, time: new Date(time).toISOString(), sequence })); }
+  drop() { this.readyState = 3; this.emit('close'); }
+  terminate() { this.drop(); }
+}
+
+test('fresh shared crypto streaming becomes the execution and chart reference, with REST fallback when the connection drops', async () => {
+  let now = NOW, tickerCalls = 0, candleCalls = 0;
+  const sockets = [], events = [];
+  const market = createMarketData({ now: () => now, socketFactory: () => { const socket = new FakePriceSocket(); sockets.push(socket); return socket; }, fetchFn: async url => {
+    if (url.includes('/ticker')) { tickerCalls++; return response({ price: '111.25', time: new Date(now - 1000).toISOString() }); }
+    candleCalls++; return response(CANDLES);
+  } });
+  try {
+    const unsubscribe = market.subscribe(value => events.push(value));
+    const warmup = await market.getExecutionQuote('BTCUSD');
+    assert.equal(warmup.deliveryMode, 'polling');
+    assert.equal(sockets.length, 1);
+    sockets[0].open(); sockets[0].tick('114.125');
+    const live = await market.getExecutionQuote('BTCUSD');
+    assert.equal(live.price, 114.125);
+    assert.equal(live.deliveryMode, 'streaming');
+    assert.equal(live.executable, true);
+    assert.equal(tickerCalls, 1);
+    assert.equal(events[0].price, live.price);
+    const chart = await market.get('BTCUSD');
+    assert.equal(chart.price, live.price);
+    assert.equal(chart.asOf, live.asOf);
+    assert.equal(chart.deliveryMode, 'streaming');
+    assert.equal(candleCalls, 1);
+    now += 1000; sockets[0].drop();
+    const fallback = await market.getExecutionQuote('BTCUSD');
+    assert.equal(fallback.deliveryMode, 'polling');
+    assert.equal(fallback.asOf, Math.floor((now - 1000) / 1000));
+    assert.equal(tickerCalls, 2, 'The newest live tick invalidates a REST cache captured before it');
+    unsubscribe();
+  } finally { market.close(); }
+});
+
+test('a slow or failing REST response cannot replace a newer stream tick received during the request', async () => {
+  for (const fail of [false, true]) {
+    let release, calls = 0;
+    const gate = new Promise(resolve => { release = resolve; });
+    const socket = new FakePriceSocket();
+    const market = createMarketData({ now: () => NOW, socketFactory: () => socket, fetchFn: async () => { calls++; await gate; if (fail) throw new Error('Private transport failure'); return response(ticker); } });
+    try {
+      const pending = market.getExecutionQuote('BTCUSD');
+      socket.open(); socket.tick('115.875');
+      release();
+      const result = await pending;
+      assert.equal(result.price, 115.875);
+      assert.equal(result.deliveryMode, 'streaming');
+      assert.equal(result.asOf, SECOND);
+      assert.equal((await market.getExecutionQuote('BTCUSD')).price, 115.875);
+      assert.equal(calls, 1);
+    } finally { market.close(); }
+  }
+});
+
+test('a stream disconnect between quote selection and async continuation re-enters fresh REST fallback', async () => {
+  let calls = 0;
+  const socket = new FakePriceSocket();
+  const market = createMarketData({ now: () => NOW, socketFactory: () => socket, fetchFn: async () => { calls++; return response({ price: '63000', time: new Date(NOW).toISOString() }); } });
+  try {
+    await market.getExecutionQuote('BTCUSD'); socket.open(); socket.tick('64000');
+    const pending = market.getExecutionQuote('BTCUSD');
+    socket.drop();
+    const result = await pending;
+    assert.equal(result.price, 63000);
+    assert.equal(result.deliveryMode, 'polling');
+    assert.equal(result.executable, true);
+    assert.equal(market.streamStatus('BTCUSD').connected, false);
+    assert.equal(calls, 2);
+  } finally { market.close(); }
+});
+
+test('a disconnected async stream selection cannot execute when REST fallback is unavailable', async () => {
+  let calls = 0;
+  const socket = new FakePriceSocket();
+  const market = createMarketData({ now: () => NOW, socketFactory: () => socket, fetchFn: async () => { calls++; if (calls > 1) throw new Error('Provider unavailable'); return response(ticker); } });
+  try {
+    await market.getExecutionQuote('BTCUSD'); socket.open(); socket.tick('64000');
+    const pending = market.getExecutionQuote('BTCUSD');
+    socket.drop();
+    await assert.rejects(pending, error => error instanceof MarketDataError && error.status === 503);
+    assert.equal(calls, 2);
+  } finally { market.close(); }
+});
+
+test('an async quote continuation prefers a new connection generation rather than its retired stream result', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  let now = NOW, calls = 0;
+  const sockets = [];
+  const market = createMarketData({ now: () => now, socketFactory: () => { const socket = new FakePriceSocket(); sockets.push(socket); return socket; }, fetchFn: async () => { calls++; return response(ticker); } });
+  try {
+    await market.getExecutionQuote('BTCUSD'); sockets[0].open(); sockets[0].tick('64000');
+    const pending = market.getExecutionQuote('BTCUSD');
+    sockets[0].drop(); now += 1000; t.mock.timers.tick(1000);
+    assert.equal(sockets.length, 2);
+    sockets[1].open(); sockets[1].tick('64100', now, 2);
+    const result = await pending;
+    assert.equal(result.price, 64100);
+    assert.equal(result.deliveryMode, 'streaming');
+    assert.equal(result.asOf, now / 1000);
+    assert.equal(result.fetchedAt, now);
+    assert.equal(calls, 1);
+  } finally { market.close(); }
+});
+
+test('chart quote refresh uses execution verification so an async disconnect cannot label a retired stream executable', async () => {
+  let tickerCalls = 0, dropDuringRead = false;
+  const socket = new FakePriceSocket();
+  const market = createMarketData({ socketFactory: () => socket, now: () => {
+    if (dropDuringRead) { dropDuringRead = false; queueMicrotask(() => socket.drop()); }
+    return NOW;
+  }, fetchFn: async url => {
+    if (url.includes('/ticker')) { tickerCalls++; return response({ price: '111.25', time: new Date(NOW).toISOString() }); }
+    return response(CANDLES);
+  } });
+  try {
+    await market.get('BTCUSD'); socket.open(); socket.tick('114.125');
+    dropDuringRead = true;
+    const result = await market.get('BTCUSD');
+    assert.equal(result.price, 111.25);
+    assert.equal(result.deliveryMode, 'polling');
+    assert.equal(result.executable, true);
+    assert.equal(market.streamStatus('BTCUSD').connected, false);
+    assert.equal(tickerCalls, 2);
+  } finally { market.close(); }
+});
+
+test('a socket close after execution verification but before the chart continuation marks its cached history non-executable', async () => {
+  const socket = new FakePriceSocket();
+  const market = createMarketData({ now: () => NOW, socketFactory: () => socket, fetchFn: async url => response(url.includes('/ticker') ? ticker : CANDLES) });
+  try {
+    await market.get('BTCUSD'); socket.open(); socket.tick('114.125');
+    const pending = market.get('BTCUSD');
+    await Promise.resolve();
+    socket.drop();
+    const result = await pending;
+    assert.equal(result.executable, false);
+    assert.equal(result.stale, true);
+    assert.equal(market.streamStatus('BTCUSD').connected, false);
+  } finally { market.close(); }
+});
+
+test('heartbeats cannot make an old stream snapshot executable and the provider remains on fresh REST fallback', async () => {
+  let now = NOW, calls = 0;
+  const socket = new FakePriceSocket();
+  const market = createMarketData({ now: () => now, socketFactory: () => socket, fetchFn: async () => { calls++; return response({ price: '111.25', time: new Date(now - 1000).toISOString() }); } });
+  try {
+    await market.getExecutionQuote('BTCUSD'); socket.open(); socket.tick('114.125');
+    now += 31000;
+    socket.emit('message', JSON.stringify({ type: 'heartbeat', product_id: 'BTC-USD', time: new Date(now).toISOString() }));
+    const result = await market.getExecutionQuote('BTCUSD');
+    assert.equal(result.price, 111.25);
+    assert.equal(result.deliveryMode, 'polling');
+    assert.equal(result.fetchedAt, now);
+    assert.equal(calls, 2);
+  } finally { market.close(); }
+});
+
+test('forex stays on thirty-second REST quotes with no crypto or Twelve Data websocket connections', async () => {
+  let now = NOW, calls = 0, socketCalls = 0;
+  const market = createMarketData({ now: () => now, twelveDataApiKey: 'test-private-key', socketFactory: () => { socketCalls++; throw new Error('Forex must not open any socket'); }, fetchFn: async () => { calls++; return response({ symbol: 'EUR/USD', close: '1.12', last_quote_at: Math.floor(now / 1000) - 1, is_market_open: true }); } });
+  try {
+    assert.equal((await market.getExecutionQuote('EURUSD')).deliveryMode, 'polling');
+    now += 15000;
+    assert.equal((await market.getExecutionQuote('EURUSD')).deliveryMode, 'polling');
+    assert.equal(calls, 1);
+    now += 16000;
+    await market.getExecutionQuote('EURUSD');
+    assert.equal(calls, 2);
+    assert.equal(socketCalls, 0);
+  } finally { market.close(); }
+});
+
+test('injected fetch tests default to disabled sockets unless streaming is explicitly enabled', async () => {
+  const market = createMarketData({ now: () => NOW, fetchFn: async () => response(ticker) });
+  try {
+    assert.equal((await market.getExecutionQuote('BTCUSD')).deliveryMode, 'polling');
+    assert.deepEqual(market.streamStatus('BTCUSD'), { state: 'disabled', connected: false, fresh: false, error: null });
+  } finally { market.close(); }
+});
+
+test('the production environment can disable streaming while an explicit injected option still takes precedence', async () => {
+  const previous = process.env.CRYPTO_STREAMING_ENABLED;
+  process.env.CRYPTO_STREAMING_ENABLED = 'false';
+  const disabled = createMarketData();
+  const socket = new FakePriceSocket();
+  const explicit = createMarketData({ streams: true, socketFactory: () => socket, now: () => NOW, fetchFn: async () => response(ticker) });
+  try {
+    assert.equal(disabled.streamStatus('BTCUSD').state, 'disabled');
+    await explicit.getExecutionQuote('BTCUSD'); socket.open(); socket.tick('116.125');
+    assert.equal((await explicit.getExecutionQuote('BTCUSD')).deliveryMode, 'streaming');
+  } finally {
+    disabled.close(); explicit.close();
+    if (previous === undefined) delete process.env.CRYPTO_STREAMING_ENABLED; else process.env.CRYPTO_STREAMING_ENABLED = previous;
+  }
 });

@@ -59,14 +59,17 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
     sourceRow.append('Quote source: ', link, ` · As of ${dateLabel(header.asOf, header.quoteKind === 'daily-reference')} UTC`);
     if (header.fetchedAt) sourceRow.append(` · Retrieved ${new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }).format(header.fetchedAt)} UTC`);
     if (header.delayed) sourceRow.append(' · Delayed / periodic reference');
+    if (header.deliveryMode === 'streaming') sourceRow.append(' · Streaming quotes');
+    else if (header.deliveryMode === 'polling') sourceRow.append(' · Periodic quotes');
     if (executionReady === false) sourceRow.append(' · Demo execution paused');
     if (data?.historySource) sourceRow.append(` · Chart history: ${data.historySource}`);
   }
   function renderQuoteHeader() {
     const header = executionQuote || data;
     quote.textContent = priceLabel(header?.price, symbol);
+    const delivery = executionQuote?.deliveryMode === 'streaming' ? 'Streaming' : executionQuote?.deliveryMode === 'polling' ? 'Periodic' : null;
     el('.mr-quote-label').textContent = executionQuote
-      ? executionReady ? 'Execution reference price' : 'Last execution reference · paused'
+      ? executionReady ? delivery ? `${delivery} execution reference` : 'Execution reference price' : 'Last execution reference · paused'
       : header?.quoteKind === 'daily-reference' ? 'Daily chart reference' : executionReady === false ? 'Chart reference · execution paused' : 'Latest price reference';
     sourceInfo();
   }
@@ -184,7 +187,7 @@ export function createMarketReference(container, initialSymbol = 'EURUSD', userI
       if (destroyed || next !== symbol) return;
       executionReady = ready === true;
       const valid = Number.isFinite(currentQuote?.price) && currentQuote.price > 0 && Number.isFinite(currentQuote.asOf) && Number.isFinite(currentQuote.fetchedAt) && typeof currentQuote.source === 'string' && currentQuote.source.length > 0;
-      executionQuote = valid ? { price:currentQuote.price, asOf:currentQuote.asOf, fetchedAt:currentQuote.fetchedAt, source:currentQuote.source, sourceUrl:({ 'Coinbase Exchange':'https://www.coinbase.com/advanced-trade', 'Twelve Data':'https://twelvedata.com/' })[currentQuote.source], quoteKind:isCrypto(symbol) ? 'last-trade' : 'intraday', delayed:false } : null;
+      executionQuote = valid ? { price:currentQuote.price, asOf:currentQuote.asOf, fetchedAt:currentQuote.fetchedAt, source:currentQuote.source, sourceUrl:({ 'Coinbase Exchange':'https://www.coinbase.com/advanced-trade', 'Twelve Data':'https://twelvedata.com/' })[currentQuote.source], deliveryMode:currentQuote.deliveryMode, quoteKind:isCrypto(symbol) ? 'last-trade' : 'intraday', delayed:false } : null;
       renderQuoteHeader();
     },
     destroy() { destroyed = true; sequence++; controller?.abort(); chartEvents?.abort(); clearInterval(timer); resizeObserver.disconnect(); iframeObserver.disconnect(); document.removeEventListener('visibilitychange', onVisible); container.replaceChildren(); }

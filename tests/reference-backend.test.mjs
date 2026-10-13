@@ -109,6 +109,27 @@ test('cross-pair HTTP fills fetch fresh conversion references and settle profit 
   }finally{await h.close();}
 });
 
+test('HTTP lot orders convert on the server and reject conflicting or invalid lot volumes',async()=>{
+  const h=await harness();
+  try{
+    const open=await h.request('/api/trades',{symbol:'EURJPY',side:'buy',lots:.01,lotSize:1,price:1},h.cookie);
+    assert.equal(open.status,200);
+    const position=open.body.account.positions[0];
+    assert.equal(position.lots,.01);assert.equal(position.lotSize,100000);assert.equal(position.quantity,1000);
+    assert.equal(position.entry,162.75);assert.equal(position.marginUsd,162.75*1000/150/30);
+    for(const size of [{lots:.015},{lots:0},{lots:-.01},{lots:'0.01'},{lots:.01,quantity:1000}]) {
+      const rejected=await h.request('/api/trades',{symbol:'EURJPY',side:'buy',...size},h.cookie);
+      assert.equal(rejected.status,400);assert.match(rejected.body.error,/lot size|Lot size|either/);
+    }
+    const pending=await h.request('/api/orders',{symbol:'EURJPY',side:'buy',lots:.02,limitPrice:162},h.cookie);
+    assert.equal(pending.status,200);assert.equal(pending.body.account.pending[0].quantity,2000);assert.equal(pending.body.account.pending[0].lots,.02);
+    const mixedLimit=await h.request('/api/orders',{symbol:'EURJPY',side:'buy',lots:.01,quantity:1000,limitPrice:162},h.cookie);
+    assert.equal(mixedLimit.status,400);assert.equal((await h.request('/api/account?symbol=EURJPY',undefined,h.cookie)).body.account.positions.length,1);
+    const legacy=await h.request('/api/trades',{symbol:'BTCUSD',side:'sell',quantity:.001},h.cookie);
+    assert.equal(legacy.status,200);assert.equal(legacy.body.account.positions[1].quantity,.001);assert.equal(legacy.body.account.positions[1].lots,.001);
+  }finally{await h.close();}
+});
+
 test('polls and orders serialize behind provider awaits, preventing lost fills',async()=>{
   const h=await harness();
   try{

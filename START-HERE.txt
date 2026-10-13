@@ -15,6 +15,9 @@ Register a new account to try the trading dashboard. Crypto demo fills use fresh
 Coinbase reference prices; intraday forex fills need a configured Twelve Data key.
 Ten forex pairs are available, including yen and sterling crosses. Their profit,
 margin, and risk are valued in USD using fresh conversion references.
+Trade sizes are entered in lots: 1 forex lot is 100,000 base units; 1 crypto lot
+is 1 coin. Crypto reference prices use a live stream when available. Forex Basic
+uses periodic provider quotes. The dashboard labels the active price feed.
 Missing or stale quotes pause trading. Earlier demo accounts can start a new
 reference-priced attempt using Reset demo, with previous records preserved. Cloud-instance users
 and secrets are excluded from this export. Your laptop creates its own

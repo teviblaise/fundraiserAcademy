@@ -1,3 +1,5 @@
+import { createLiveQuotes } from './live-quotes.mjs';
+
 const INTERVALS = Object.freeze({ '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 });
 const SYMBOLS = Object.freeze({
   BTCUSD: { provider: 'coinbase', product: 'BTC-USD', base: 'BTC', quote: 'USD' },
@@ -78,8 +80,9 @@ function normalizePoints(payload, base, quote, start, end) {
 }
 
 /** Executions use fresh provider quotes; historical and daily references are never executable. */
-export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, cryptoTtlMs = 30000, fxTtlMs = 3600000, executionCryptoTtlMs = 5000, executionFxTtlMs = 30000, twelveDataApiKey = process.env.TWELVE_DATA_API_KEY, timeoutMs = 8000, maxEntries = 64, errorBackoffMs = 30000 } = {}) {
+export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, cryptoTtlMs = 30000, fxTtlMs = 3600000, executionCryptoTtlMs = 5000, executionFxTtlMs = 30000, twelveDataApiKey = process.env.TWELVE_DATA_API_KEY, timeoutMs = 8000, maxEntries = 64, errorBackoffMs = 30000, socketFactory, streams = socketFactory !== undefined || fetchFn === globalThis.fetch && process.env.CRYPTO_STREAMING_ENABLED?.trim().toLowerCase() !== 'false' } = {}) {
   if (typeof fetchFn !== 'function' || typeof now !== 'function') throw new TypeError('A fetch function and clock are required');
+  if (typeof streams !== 'boolean') throw new TypeError('The streaming setting must be a boolean');
   if (![cryptoTtlMs, fxTtlMs, executionCryptoTtlMs, executionFxTtlMs, timeoutMs, maxEntries, errorBackoffMs].every(value => Number.isFinite(value) && value > 0)) throw new TypeError('Market cache settings must be positive');
   executionCryptoTtlMs = Math.min(executionCryptoTtlMs, 5000);
   executionFxTtlMs = Math.min(executionFxTtlMs, 30000);
@@ -89,7 +92,12 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
   if (maxEntries < 1) throw new TypeError('At least one cache entry is required');
   const cache = new Map(), pending = new Map(), cooldown = new Map(), controllers = new Set();
   const executionCache = new Map(), executionPending = new Map(), executionCooldown = new Map();
+  // Injected fetch tests stay offline unless they explicitly inject a socket too.
+  const live = streams ? createLiveQuotes({ socketFactory, now }) : null;
+  live?.subscribe(value => executionCache.delete(value.symbol));
   let closed = false;
+
+  const liveQuote = symbol => { const value = !closed ? live?.get(symbol) : null; return freshQuote(value) ? value : null; };
 
   function unavailable(provider) {
     return new MarketDataError(`${SOURCES[provider].name} prices are temporarily unavailable. Try again shortly.`);
@@ -162,13 +170,15 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     }
     if (!Number.isSafeInteger(asOf) || asOf <= 0 || asOf > Math.floor(now() / 1000) + 60) throw new Error('Invalid quote timestamp');
     const source = SOURCES[provider];
-    return { symbol, baseCurrency: spec.base, quoteCurrency: spec.quote, price, asOf, fetchedAt: now(), source: source.name, sourceUrl: source.url };
+    return { symbol, baseCurrency: spec.base, quoteCurrency: spec.quote, price, asOf, fetchedAt: now(), source: source.name, sourceUrl: source.url, deliveryMode: 'polling' };
   }
 
   async function quote(symbol) {
     if (!Object.hasOwn(SYMBOLS, symbol)) throw new MarketDataError('Choose a supported forex or cryptocurrency pair.', 400);
     const provider = SYMBOLS[symbol].provider === 'coinbase' ? 'coinbase' : 'twelvedata';
     if (closed) throw unavailable(provider);
+    const streaming = provider === 'coinbase' ? liveQuote(symbol) : null;
+    if (streaming) return streaming;
     if (provider === 'twelvedata' && !fxApiKey) throw new MarketDataError('Live forex demo fills need a configured Twelve Data API key. ECB daily reference prices cannot execute trades.');
     if (provider === 'twelvedata' && forexClosed(now())) throw new MarketDataError('The forex market is closed. Demo orders are paused until fresh market quotes resume.');
     const entry = executionCache.get(symbol);
@@ -187,6 +197,8 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
       try {
         const value = await Promise.race([loadExecutionQuote(symbol, controller.signal), deadline]);
         if (closed) throw unavailable(provider);
+        const streaming = liveQuote(symbol);
+        if (streaming) { executionCooldown.delete(provider); return streaming; }
         const expires = now() + (provider === 'coinbase' ? executionCryptoTtlMs : executionFxTtlMs);
         // Refresh an accepted snapshot before its observation becomes stale.
         // Already-stale responses retain the usual retry cadence and never execute.
@@ -195,6 +207,8 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
         return value;
       } catch (error) {
         controller.abort();
+        const streaming = liveQuote(symbol);
+        if (streaming) return streaming;
         const failure = error instanceof MarketDataError ? error : unavailable(provider);
         if (!closed) executionCooldown.set(provider, { until: now() + errorBackoffMs, message: failure.message, status: failure.status });
         throw failure;
@@ -209,8 +223,17 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
   }
 
   async function getExecutionQuote(symbol) {
-    const value = await quote(symbol);
+    let result = await quote(symbol);
+    let streaming = liveQuote(symbol);
+    // A socket can close between an async quote return and this continuation.
+    // Re-enter the normal REST fallback instead of executing a retired tick.
+    if (result.deliveryMode === 'streaming' && !streaming) {
+      result = await quote(symbol);
+      streaming = liveQuote(symbol);
+    }
     if (closed) throw new MarketDataError('Market prices are unavailable because the market connection is closed.');
+    if (result.deliveryMode === 'streaming' && !streaming) throw new MarketDataError('Crypto streaming disconnected before its reference price could be verified. Demo orders wait for a fresh reference quote.');
+    const value = streaming ?? result;
     if (!freshQuote(value)) throw new MarketDataError(`${value.source} returned a stale quote. Demo orders are paused until a fresh reference price is available.`);
     return { ...value, executable: true };
   }
@@ -221,7 +244,10 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     try {
       // Keep candle/history caching separate from quote caching so the displayed
       // latest reference and demo execution use the same provider quote.
-      const latest = crypto ? await quote(value.symbol) : await getExecutionQuote(value.symbol);
+      const result = await getExecutionQuote(value.symbol);
+      const streaming = liveQuote(value.symbol);
+      if (result.deliveryMode === 'streaming' && !streaming) throw unavailable('coinbase');
+      const latest = streaming ?? result;
       return copy({ ...value, ...latest, quoteKind: crypto ? 'last-trade' : 'intraday', stale: !freshQuote(latest), executable: freshQuote(latest), delayed: false }, cached, false);
     } catch {
       if (!crypto && value.points.length) {
@@ -346,5 +372,10 @@ export function createMarketData({ fetchFn = globalThis.fetch, now = Date.now, c
     return chartCopy(value, value.status === 'cached', false, end !== undefined);
   }
 
-  return { get, getExecutionQuote, close() { closed = true; for (const controller of controllers) controller.abort(); cache.clear(); executionCache.clear(); } };
+  return {
+    get, getExecutionQuote,
+    subscribe(listener) { if (typeof listener !== 'function') throw new TypeError('A quote listener is required'); return live?.subscribe(listener) ?? (() => {}); },
+    streamStatus(symbol) { return live?.status(symbol) ?? { state: closed ? 'closed' : 'disabled', connected: false, fresh: false, error: null }; },
+    close() { closed = true; live?.close(); for (const controller of controllers) controller.abort(); cache.clear(); executionCache.clear(); },
+  };
 }

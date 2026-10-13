@@ -25,6 +25,14 @@ open its **Environment** settings, add `TWELVE_DATA_API_KEY` with your actual ke
 as the secret value, and choose **Save, rebuild, and deploy**. Confirm the service
 uses `preview/fundraiser-academy` and deploys its latest commit. The running server
 reads the key at startup, so a restart/redeploy is required after changing it.
+Crypto live ticks additionally need outbound access to
+`wss://ws-feed.exchange.coinbase.com`; REST quotes remain the fallback. Use
+`CRYPTO_STREAMING_ENABLED=false` to disable that connection explicitly. The
+dashboard's same-origin `/api/account-stream` uses authenticated Server-Sent
+Events; reverse proxies should keep the connection open and avoid buffering it.
+Twelve Data Basic forex uses the existing periodic REST quotes, rather than
+WebSocket ticks. A browser receiving live account events does not change the
+underlying forex provider's update frequency or credit limits.
 All ten forex pairs need provider-plan coverage. Yen crosses additionally fetch
 USD/JPY and EUR/GBP fetches GBP/USD to convert account values into USD; include
 that traffic when choosing a quote allowance. Conversion outages pause fills.

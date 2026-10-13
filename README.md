@@ -152,6 +152,25 @@ the provider's `last_quote_at` observation time when present; the interval
 times pause fills rather than borrowing another timestamp or the server clock.
 Crypto execution uses the Coinbase ticker even if historical candles are unavailable.
 
+The dashboard receives authenticated live account updates approximately once per
+second. Crypto references use Coinbase's public WebSocket ticker feed, with REST
+polling when the stream is unavailable. Prices, order estimates, open P&L, and the
+reference-price headline use the same server snapshots. The feed label distinguishes
+streaming observations from periodic quotes. Twelve Data Basic forex references
+remain periodic REST quotes, cached for up to 30 seconds; Basic does not include
+forex WebSocket streaming. No fabricated ticks are inserted between observations.
+Source age and retrieval time remain visible, and unavailable quotes pause fills.
+Hidden tabs disconnect their live account stream; open trades still receive server
+risk checks. Live updates and order responses carry a revision so delayed responses
+cannot restore an older account or quote after a trade or reset.
+
+Order volume is entered in lots. For this demo, one forex lot is 100,000 units of
+the base currency, and one crypto lot is one coin. Forex volumes start at 0.01 lot
+in 0.01 increments; crypto starts at 0.001 lot in 0.001 increments. Margin and
+P&L use the corresponding contract quantity and USD conversion. Existing trades
+retain their original quantities and results; the interface displays their lot
+equivalent. Actual sponsored firms may use different contract specifications.
+
 The account is denominated in USD. Forex prices retain their native quote currency:
 JPY pairs show three decimal places, and other forex pairs show five. Margin,
 P&L, and risk limits convert to USD using fresh server references. EUR/JPY and

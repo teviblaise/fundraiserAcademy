@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,8 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
 const isMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS, symbol);
 class RequestError extends Error { constructor(status, message) { super(message); this.status = status; } }
-export function createBackend(databasePath, { marketData: injectedMarketData, now = Date.now, tickMs = 5000, autoTick = true } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+  if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -29,6 +30,11 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
   const marketData=injectedMarketData ?? createMarketData();
   const queues = new Map();
   const timerPending = new Set();
+  const streams = new Map();
+  const streamPending = new Set();
+  const streamEpoch = randomUUID();
+  const streamBufferLimit = 262144;
+  let streamCount = 0;
   let stopping = false;
   let closePromise;
   if(process.env.CONTRACT_FILE)publishContractFile(contracts,{file:process.env.CONTRACT_FILE,version:process.env.CONTRACT_VERSION,title:process.env.CONTRACT_TITLE});
@@ -41,11 +47,18 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
     else if (++value.count > max) throw new RequestError(429, 'Too many requests. Please try again later.');
     if (rates.size > 10000) for (const [k, v] of rates) if (v.until < now) rates.delete(k);
   }
-  async function body(req) {
-    if (req.headers['x-requested-with'] !== 'FundraiserAcademy' || !req.headers['content-type']?.startsWith('application/json')) throw new RequestError(403, 'Use the website to submit this request.');
+  function requireOrigin(req) {
     const origin = req.headers.origin;
     const allowed = process.env.APP_ORIGIN;
-    if (origin && (allowed ? origin !== allowed : new URL(origin).host !== req.headers.host)) throw new RequestError(403, 'Request origin is not allowed.');
+    if (origin) {
+      let matches = false;
+      try { matches = allowed ? origin === allowed : new URL(origin).host === req.headers.host; } catch { /* Reject malformed origins. */ }
+      if (!matches) throw new RequestError(403, 'Request origin is not allowed.');
+    }
+  }
+  async function body(req) {
+    if (req.headers['x-requested-with'] !== 'FundraiserAcademy' || !req.headers['content-type']?.startsWith('application/json')) throw new RequestError(403, 'Use the website to submit this request.');
+    requireOrigin(req);
     let content = '';
     for await (const chunk of req) { content += chunk; if (Buffer.byteLength(content) > 16384) throw new RequestError(413, 'Request is too large.'); }
     if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
@@ -55,16 +68,31 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
   function cookie(res, token, maxAge = sessionLifetime / 1000) {
     res.setHeader('Set-Cookie', `fa_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.COOKIE_SECURE === 'true' ? '; Secure' : ''}`);
   }
-  function user(req) {
+  function sessionHash(req) {
     const token = /(?:^|;\s*)fa_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
+    return token ? hash(token) : null;
+  }
+  function user(req) {
+    const token = sessionHash(req);
     if (!token) throw new RequestError(401, 'Please log in to continue.');
-    const row = db.prepare('SELECT users.id, users.email, users.name, users.market FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(hash(token), Date.now());
+    const row = db.prepare('SELECT users.id, users.email, users.name, users.market FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(token, Date.now());
     if (!row) throw new RequestError(401, 'Your session has expired. Please log in again.');
     return row;
   }
   function session(res, id) { const token = randomBytes(32).toString('hex'); db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token), id, Date.now() + sessionLifetime); cookie(res, token); }
-  const load = id => ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));
-  const save = (id, state) => db.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(state), id);
+  const revision = state => Number.isSafeInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
+  const load = id => {
+    const state = ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));
+    state.revision = revision(state);
+    state.streamEpoch = streamEpoch;
+    return state;
+  };
+  const save = (id, state) => {
+    const previous = JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state);
+    state.revision = revision(previous) + 1;
+    state.streamEpoch = streamEpoch;
+    return db.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(state), id);
+  };
   const event = (id, kind, detail) => db.prepare('INSERT INTO events(user_id,kind,detail,created_at) VALUES (?,?,?,?)').run(id, kind, JSON.stringify(detail), Date.now());
   function commit(id, state, kind, detail) {
     const previous=load(id);
@@ -129,6 +157,100 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
     } else save(id, state);
     return state;
   }
+  // Live browser updates are snapshots of the same persisted account used for
+  // fills and risk checks. The browser never supplies prices to this channel.
+  function removeStream(connection) {
+    if (connection.closed) return;
+    connection.closed = true;
+    connection.req.removeListener('aborted', connection.cleanup);
+    connection.res.removeListener('close', connection.cleanup);
+    const connections = streams.get(connection.userId);
+    connections?.delete(connection);
+    if (connections?.size === 0) streams.delete(connection.userId);
+    streamCount--;
+  }
+  function endStream(connection, eventName, data) {
+    if (connection.closed) return;
+    removeStream(connection);
+    if (connection.res.destroyed || connection.res.writableEnded) return;
+    if (connection.res.writableLength >= streamBufferLimit) { connection.res.destroy(); return; }
+    connection.res.end(eventName ? `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n` : undefined);
+  }
+  function validStream(connection) {
+    if (connection.closed || stopping) return false;
+    if (connection.res.destroyed || connection.res.writableEnded) { removeStream(connection); return false; }
+    const session = db.prepare('SELECT 1 FROM sessions WHERE token=? AND user_id=? AND expires>?').get(connection.token, connection.userId, Date.now());
+    if (!session) {
+      endStream(connection, 'auth-expired', { error: 'Your session has expired. Please log in again.' });
+      return false;
+    }
+    return true;
+  }
+  function writeStream(connection, frame) {
+    if (!validStream(connection)) return;
+    // Never hold an account queue waiting for a slow browser to consume data.
+    // A long journal may produce a large legitimate snapshot. Allow that frame
+    // through once, then disconnect if it remains queued when another arrives.
+    if (connection.res.writableLength >= streamBufferLimit || connection.accountFramePending && connection.res.writableLength > 0) {
+      removeStream(connection); connection.res.destroy(); return;
+    }
+    connection.accountFramePending = false;
+    try {
+      const accepted = connection.res.write(frame);
+      if (frame.startsWith('event: account\n')) connection.accountFramePending = accepted === false || connection.res.writableLength > 0;
+    }
+    catch { removeStream(connection); connection.res.destroy(); }
+  }
+  function activeStreams(id) {
+    return [...(streams.get(id) ?? [])].filter(validStream);
+  }
+  function refreshStreams(id) {
+    if (stopping || streamPending.has(id) || !streams.has(id)) return;
+    // At most one queued/in-flight refresh per account, even with several tabs.
+    streamPending.add(id);
+    return serialized(id, async () => {
+      const connections = activeStreams(id);
+      if (!connections.length) return;
+      const symbols = [...new Set(connections.map(connection => connection.symbol))];
+      const account = await syncReferenceState(id, symbols);
+      if (stopping) return;
+      for (const connection of activeStreams(id)) {
+        writeStream(connection, `event: account\ndata: ${JSON.stringify({ account, symbol: connection.symbol, serverTime: now() })}\n\n`);
+      }
+    }).catch(error => {
+      if (stopping) return;
+      console.error('Live account refresh failed:', error.message);
+      for (const connection of activeStreams(id)) writeStream(connection, `event: stream-error\ndata: ${JSON.stringify({ error: 'Live account updates are temporarily unavailable.' })}\n\n`);
+    }).finally(() => streamPending.delete(id));
+  }
+  function openStream(req, res, current, symbol) {
+    requireOrigin(req);
+    limit(req, `account-stream:${current.id}`, 60, 60000);
+    if ((streams.get(current.id)?.size ?? 0) >= 4 || streamCount >= 1000) throw new RequestError(429, 'Too many live dashboard connections. Close another dashboard tab and try again.');
+    const connection = { req, res, userId: current.id, token: sessionHash(req), symbol, closed: false };
+    connection.cleanup = () => removeStream(connection);
+    if (!streams.has(current.id)) streams.set(current.id, new Set());
+    streams.get(current.id).add(connection); streamCount++;
+    req.once('aborted', connection.cleanup);
+    res.once('close', connection.cleanup);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store, no-transform',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
+    writeStream(connection, 'retry: 3000\n\n');
+    void refreshStreams(current.id);
+  }
+  const streamTimer = setInterval(() => {
+    if (!stopping) for (const id of streams.keys()) void refreshStreams(id);
+  }, streamTickMs);
+  streamTimer.unref();
+  const heartbeatTimer = setInterval(() => {
+    if (!stopping) for (const connections of streams.values()) for (const connection of connections) writeStream(connection, ': heartbeat\n\n');
+  }, 15000);
+  heartbeatTimer.unref();
   // Existing passed attempts retain their completion and certificates, including
   // legacy attempts that are now frozen until their owner explicitly resets.
   for(const row of db.prepare('SELECT user_id,state FROM accounts').all()) {
@@ -147,7 +269,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
           OR EXISTS (SELECT 1 FROM json_each(accounts.state,'$.alerts') AS alert WHERE json_extract(alert.value,'$.active')=1)`).all(Date.now());
       for (const row of rows) {
         const state = ensureTools(JSON.parse(row.state));
-        if (state.migrationRequired || timerPending.has(row.user_id)) continue;
+        if (state.migrationRequired || timerPending.has(row.user_id) || streamPending.has(row.user_id)) continue;
         const watching = state.positions.length || state.pending.length || state.alerts.some(a => a.active);
         const dailyLock = ['Daily loss limit', 'Personal daily loss limit'].includes(state.locked);
         if (!watching && !dailyLock) continue;
@@ -198,6 +320,11 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
         session(res,row.id); respond(res,200,{user:{id:row.id,name:row.name,email:row.email,market:row.market}}); return;
       }
       const current = user(req);
+      if (req.method === 'GET' && pathname === '/api/account-stream') {
+        const symbol = new URL(req.url, 'http://localhost').searchParams.get('symbol') || 'EURUSD';
+        if (!isMarket(symbol)) throw new RequestError(400, 'Select a supported market.');
+        openStream(req, res, current, symbol); return;
+      }
       if(req.method==='GET' && pathname==='/api/market-reference'){
         limit(req,`market-reference:${current.id}`,60,60000);
         const query=new URL(req.url,'http://localhost').searchParams;
@@ -245,8 +372,10 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
       if (req.method === 'POST' && pathname === '/api/logout') {
         const data=await body(req);
         if(typeof data.endpoint==='string')delivery.unsubscribe(current.id,data.endpoint);
-        const token = /fa_session=([a-f0-9]{64})/.exec(req.headers.cookie || '')?.[1];
-        db.prepare('DELETE FROM sessions WHERE token=?').run(hash(token)); cookie(res,'',0); respond(res,200,{ok:true}); return;
+        const token = sessionHash(req);
+        db.prepare('DELETE FROM sessions WHERE token=?').run(token);
+        for (const connection of [...(streams.get(current.id) ?? [])]) if (connection.token === token) endStream(connection, 'auth-expired', { error: 'You have signed out. Please log in again.' });
+        cookie(res,'',0); respond(res,200,{ok:true}); return;
       }
       if (req.method === 'GET' && pathname === '/api/account') {
         limit(req, `account:${current.id}`, 120, 60000);
@@ -325,7 +454,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
           requireFresh(state, pathname === '/api/trades' ? [symbol, ...state.positions.map(p => p.symbol)] : [symbol]);
           try {
             if (pathname === '/api/trades') {
-              const trade = openTrade(state,{symbol:data.symbol,side:data.side,quantity:data.quantity,stopLoss:data.stopLoss ?? null,takeProfit:data.takeProfit ?? null},now());
+              const trade = openTrade(state,{symbol:data.symbol,side:data.side,...(Object.hasOwn(data,'quantity') ? { quantity:data.quantity } : {}),...(Object.hasOwn(data,'lots') ? { lots:data.lots } : {}),stopLoss:data.stopLoss ?? null,takeProfit:data.takeProfit ?? null},now());
               commit(current.id,state,'trade-open',trade);
             } else {
               closeTrade(state,data.id,'Manual close',now()); refreshRisk(state,now());
@@ -337,12 +466,19 @@ export function createBackend(databasePath, { marketData: injectedMarketData, no
         respond(res,200,result); return;
       }
       throw new RequestError(404,'API endpoint not found.');
-    } catch (error) { if (!error.status) console.error('API request failed:',error.message); respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.'}); }
+    } catch (error) {
+      if (!error.status) console.error('API request failed:',error.message);
+      if (res.headersSent) { res.destroy(); return; }
+      respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.'});
+    }
   }
   return { handle, close() {
     if (closePromise) return closePromise;
     stopping = true;
     if (timer) clearInterval(timer);
+    clearInterval(streamTimer);
+    clearInterval(heartbeatTimer);
+    for (const connections of [...streams.values()]) for (const connection of [...connections]) endStream(connection);
     marketData.close?.();
     delivery.close();
     closePromise = Promise.allSettled([...queues.values()]).then(() => db.close());

@@ -12,14 +12,42 @@ export const MARKETS = {
   BTCUSD: { label: 'BTC / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'BTC', baseCurrency: 'BTC', quoteCurrency: 'USD' },
   ETHUSD: { label: 'ETH / USD', category: 'Crypto', decimals: 2, leverage: 2, unit: 'ETH', baseCurrency: 'ETH', quoteCurrency: 'USD' },
 };
+for (const [symbol, market] of Object.entries(MARKETS)) {
+  Object.assign(market, { lotSize: market.category === 'Forex' ? 100000 : 1, lotStep: market.category === 'Forex' ? .01 : .001, maxLots: 1000, defaultLots: market.category === 'Forex' ? .1 : symbol === 'BTCUSD' ? .01 : .1 });
+}
 
 const day = time => new Date(time).toISOString().slice(0, 10);
 const hasMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS,symbol);
+export function validateOrderLots(symbol, lots) {
+  if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
+  const market = MARKETS[symbol];
+  if (!Number.isFinite(lots) || lots < market.lotStep || lots > market.maxLots) throw new Error(`Lot size must be between ${market.lotStep} and ${market.maxLots} lots.`);
+  const increments = lots / market.lotStep;
+  if (Math.abs(increments - Math.round(increments)) > 1e-8) throw new Error(`Lot size must use increments of ${market.lotStep} lots.`);
+  return Number((Math.round(increments) * market.lotStep).toFixed(market.category === 'Forex' ? 2 : 3));
+}
+export function lotToQuantity(symbol, lots) {
+  const validLots = validateOrderLots(symbol, lots);
+  const market = MARKETS[symbol];
+  return Math.round(validLots / market.lotStep) * (market.lotSize * market.lotStep);
+}
+export function quantityToLots(symbol, quantity) {
+  if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be a positive number.');
+  return quantity / MARKETS[symbol].lotSize;
+}
+export function normalizeOrderSize(order) {
+  const { symbol, quantity, lots } = order;
+  if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
+  if (lots !== undefined && quantity !== undefined) throw new Error('Send either lot size or quantity, not both.');
+  if (lots !== undefined) return { quantity: lotToQuantity(symbol, lots), lots: validateOrderLots(symbol, lots), lotSize: MARKETS[symbol].lotSize };
+  return { quantity, lots: quantityToLots(symbol, quantity), lotSize: MARKETS[symbol].lotSize };
+}
 export const REFERENCE_MAX_SOURCE_AGE = 120000;
 export const REFERENCE_MAX_FETCH_AGE = 30000;
 const emptyPrice = () => ({ mid: null, previous: null, history: [], asOf: null, fetchedAt: null, source: null, available: false, executable: false });
 const CONVERSION_MARKETS = { GBP: { symbol: 'GBPUSD', direction: 'direct' }, JPY: { symbol: 'USDJPY', direction: 'inverse' }, CHF: { symbol: 'USDCHF', direction: 'inverse' }, CAD: { symbol: 'USDCAD', direction: 'inverse' } };
-const quoteMetadata = q => ({ price: q.price, asOf: q.asOf, fetchedAt: q.fetchedAt, source: q.source, ...('usdRate' in q ? { usdRate: q.usdRate, conversionQuote: q.conversionQuote } : {}) });
+const quoteMetadata = q => ({ price: q.price, asOf: q.asOf, fetchedAt: q.fetchedAt, source: q.source, ...(q.deliveryMode ? { deliveryMode: q.deliveryMode } : {}), ...('usdRate' in q ? { usdRate: q.usdRate, conversionQuote: q.conversionQuote } : {}) });
 export function marketDependencies(symbol) {
   if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
   const conversion = CONVERSION_MARKETS[MARKETS[symbol].quoteCurrency];
@@ -58,8 +86,9 @@ export function applyReferenceQuotes(account, quotes, now = Date.now()) {
   captureDayBaseline(account,now);
   const updates = Array.isArray(quotes) ? quotes : Object.entries(quotes).map(([symbol, q]) => ({ ...q, symbol }));
   for (const update of updates) {
-    const { symbol, price, asOf, fetchedAt, source, executable } = update;
+    const { symbol, price, asOf, fetchedAt, source, executable, deliveryMode } = update;
     if (!hasMarket(symbol) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(asOf) || !Number.isFinite(fetchedAt) || typeof source !== 'string' || !source.trim() || executable !== true || now - asOf * 1000 > REFERENCE_MAX_SOURCE_AGE || now - asOf * 1000 < -5000 || now - fetchedAt > REFERENCE_MAX_FETCH_AGE || now - fetchedAt < -5000) throw new Error('Only fresh, timestamped reference quotes can be used for execution.');
+    if (deliveryMode !== undefined && !['streaming','polling'].includes(deliveryMode)) throw new Error('Choose a supported reference delivery mode.');
     const p = account.prices[symbol] ??= emptyPrice();
     if (p.asOf !== null && asOf < p.asOf) continue;
     if (p.mid !== price || p.asOf !== asOf || p.source !== source) {
@@ -69,7 +98,7 @@ export function applyReferenceQuotes(account, quotes, now = Date.now()) {
       p.history = p.history.slice(-80);
       account.ticks++;
     }
-    Object.assign(p, { asOf, fetchedAt, source, available: true, executable: true, error: null });
+    Object.assign(p, { asOf, fetchedAt, source, ...(deliveryMode ? {deliveryMode} : {}), available: true, executable: true, error: null });
   }
   return account;
 }
@@ -122,13 +151,15 @@ export function updateStops(account, id, stopLoss, takeProfit, now = Date.now())
 export function placeLimit(account, order, now = Date.now()) {
   ensureTools(account); refreshRisk(account,now);
   if(account.locked) throw new Error('Trading is locked.');
-  const {symbol,side,quantity,limitPrice,stopLoss=null,takeProfit=null}=order;
-  if (!hasMarket(symbol) || !['buy','sell'].includes(side) || !Number.isFinite(quantity) || quantity<=0 || !Number.isFinite(limitPrice) || limitPrice<=0) throw new Error('Enter a valid market, direction, quantity, and limit price.');
+  const {symbol,side,limitPrice,stopLoss=null,takeProfit=null}=order;
+  if (!hasMarket(symbol) || !['buy','sell'].includes(side) || !Number.isFinite(limitPrice) || limitPrice<=0) throw new Error('Enter a valid market, direction, lot size, and limit price.');
+  const size=normalizeOrderSize(order);
+  const {quantity}=size;
   const q=assertExecutableQuote(account,symbol,now);
   if(side==='buy'?limitPrice>=q.ask:limitPrice<=q.bid) throw new Error('A buy limit must be below the ask; a sell limit must be above the bid.');
   if(account.pending.length>=20) throw new Error('The demo allows 20 pending orders.');
   validateStops(side,limitPrice,quantity,stopLoss,takeProfit,account,null,quoteCurrencyToUSD(account,symbol).usdRate);
-  const pending={id:account.nextId++,symbol,side,quantity,limitPrice,stopLoss,takeProfit,createdAt:now};
+  const pending={id:account.nextId++,symbol,side,...size,limitPrice,stopLoss,takeProfit,createdAt:now};
   account.pending.push(pending);
   notify(account,'Limit order placed',`${symbol} ${side} limit #${pending.id} at ${limitPrice}. Margin is checked at execution.`,now);
   return pending;
@@ -148,7 +179,7 @@ export function quote(account, symbol) {
   if (!hasMarket(symbol)) throw new Error('Choose a supported market.');
   const p = account.executionMode === 'reference' ? account.prices?.[symbol] ?? emptyPrice() : emptyPrice();
   const mid = Number.isFinite(p.mid) && p.mid > 0 ? p.mid : null;
-  return { bid: mid, ask: mid, price: mid, source: p.source ?? null, asOf: p.asOf ?? null, fetchedAt: p.fetchedAt ?? null, available: p.available === true, executable: p.executable === true, ...(MARKETS[symbol].quoteCurrency === 'USD' ? {} : quoteCurrencyToUSD(account,symbol)) };
+  return { bid: mid, ask: mid, price: mid, source: p.source ?? null, asOf: p.asOf ?? null, fetchedAt: p.fetchedAt ?? null, available: p.available === true, executable: p.executable === true, ...(p.deliveryMode ? {deliveryMode:p.deliveryMode} : {}), ...(MARKETS[symbol].quoteCurrency === 'USD' ? {} : quoteCurrencyToUSD(account,symbol)) };
 }
 export function pnl(account, position) {
   const prices = quote(account, position.symbol);
@@ -216,11 +247,13 @@ export function refreshRisk(account, now = Date.now()) {
   if (!account.locked && !account.positions.length && account.balance >= account.initial * 1.1 && account.tradingDays.length>=3) { account.locked = 'Profit target achieved'; account.pending=[]; notify(account,'Practice challenge passed','10% realized profit reached over at least 3 trading days with no open positions.',now); }
   return reason;
 }
-export function openTrade(account, { symbol, side, quantity, stopLoss = null, takeProfit = null }, now = Date.now()) {
+export function openTrade(account, order, now = Date.now()) {
   refreshRisk(account, now);
   if (account.locked) throw new Error(`${account.locked} reached. Trading is locked.`);
+  const { symbol, side, stopLoss = null, takeProfit = null } = order;
   if (!hasMarket(symbol) || !['buy', 'sell'].includes(side)) throw new Error('Choose a valid market and direction.');
-  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be a positive number.');
+  const size=normalizeOrderSize(order);
+  const {quantity}=size;
   if (account.positions.length >= account.limits.maxPositions) throw new Error('Your maximum open-position limit has been reached.');
   const prices = assertExecutableQuote(account, symbol, now);
   for (const existing of account.positions) assertExecutableQuote(account,existing.symbol,now);
@@ -229,11 +262,11 @@ export function openTrade(account, { symbol, side, quantity, stopLoss = null, ta
   validateStops(side,entry,quantity,stopLoss,takeProfit,account,prices,usdRate);
   const margin = entry * quantity * usdRate / MARKETS[symbol].leverage;
   const m = metrics(account,now);
-  if (margin > m.freeMargin) throw new Error('Insufficient free margin. Reduce your quantity.');
-  const position = { id: account.nextId++, symbol, side, quantity, entry, marginUsd: margin, entryQuote: quoteMetadata(prices), stopLoss, takeProfit, openedAt: now };
+  if (margin > m.freeMargin) throw new Error('Insufficient free margin. Reduce your lot size.');
+  const position = { id: account.nextId++, symbol, side, ...size, entry, marginUsd: margin, entryQuote: quoteMetadata(prices), stopLoss, takeProfit, openedAt: now };
   account.positions.push(position);
   if(!account.tradingDays.includes(day(now)))account.tradingDays.push(day(now));
-  notify(account,'Trade filled',`${symbol} ${side} #${position.id}: ${quantity} units at ${entry.toFixed(MARKETS[symbol].decimals)}.`,now);
+  notify(account,'Trade filled',`${symbol} ${side} #${position.id}: ${size.lots} lots (${quantity} ${MARKETS[symbol].unit}) at ${entry.toFixed(MARKETS[symbol].decimals)}.`,now);
   refreshRisk(account, now);
   return position;
 }
@@ -258,7 +291,7 @@ export function advanceMarket(account, now = Date.now()) {
     const q=quote(account,pending.symbol);
     if(pending.side==='buy'?q.ask<=pending.limitPrice:q.bid>=pending.limitPrice) {
       account.pending=account.pending.filter(p=>p.id!==pending.id);
-      try { const p=openTrade(account,pending,now); p.limitOrderId=pending.id; }
+      try { const { lots, ...executionOrder }=pending; const p=openTrade(account,executionOrder,now); p.limitOrderId=pending.id; }
       catch(error) { notify(account,'Limit order rejected',`Order #${pending.id}: ${error.message}`,now); }
     }
   }
