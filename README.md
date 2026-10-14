@@ -106,8 +106,8 @@ Configuration:
 - `COOKIE_SECURE=true`: secure cookies; enable with HTTPS for deployment.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
-single-server development backend, not a complete public-launch system. Email
-verification, password recovery, admin/reviewer tools, account deletion, retention
+single-server development backend, not a complete public-launch system. Password
+recovery, funding reviewer tools, account deletion, retention
 policy, operational backups, and funding/payout integrations still need implementation.
 Formal program terms and legal/privacy information must be finalized before launch.
 
@@ -312,3 +312,45 @@ Endpoints: GET `/api/certificates`, `/api/certificates/:id`,
 `/api/notification-settings`; POST `/api/push/subscribe`, `/api/push/unsubscribe`,
 `/api/email/request-verification`, `/api/email/preferences`, `/api/email/verify`.
 Only email confirmation is token-authorized without an existing login.
+
+
+### Customer support and human handoff
+
+A Support button opens the customer conversation from site pages. Public visitors
+can read basic company answers; signed-in clients, including clients waiting for
+email confirmation, can save a conversation and request an agent. The assistant
+covers the published model, assessment limits, registration, certificates, and
+required agreement. Unpublished profit splits, account sizes, partner lists, and
+individual sponsorship decisions are referred to staff.
+
+Set `SUPPORT_AI_API_KEY` in secure server settings for generative OpenAI replies.
+`SUPPORT_AI_MODEL` defaults to `gpt-4.1-mini`. The key stays on the server; only
+bounded chat history and the academy knowledge guide are sent to the provider,
+with response storage disabled. Profile, trading, certificate, and agreement
+records are not attached. Without a working AI key, answers come from the local
+**Academy guide** and are labeled accordingly. Support has no trading, funding,
+account-editing, or legal-signing tools.
+
+“Talk to an agent” or a clear request to speak with a person places the conversation
+in the human queue and pauses automated replies. Messages and handoff history stay
+in SQLite. Authorized agents claim requests and reply in the same conversation at
+`support-agent.html`. A queued request does not mean an agent is online or available
+immediately; no support hours or response-time promise is configured.
+
+Staff access starts empty and always requires a registered, email-verified user.
+An operator can set `SUPPORT_STAFF_EMAILS` to a comma-separated list of verified
+staff emails in hosting settings, then restart. This is a server setting, never a
+registration field. Alternatively, after the database has initialized, run:
+
+```sh
+npm run support:staff -- grant --email staff@your-domain.example
+npm run support:staff -- list
+npm run support:staff -- revoke --email staff@your-domain.example
+```
+
+Use the same `DATABASE_PATH` as the running service. Removing an environment-based
+staff grant requires removing that email from `SUPPORT_STAFF_EMAILS` and restarting;
+a CLI revoke does not override the environment allowlist. Staff roles grant support
+inbox access, not funding reviewer or trading privileges. Keep the database and
+support transcripts on private persistent storage. API and browser tests inject
+AI and email transports; they do not establish live provider billing or inbox receipt.

@@ -35,3 +35,9 @@ See README.md for features and DEPLOYMENT.md for later live hosting.
 After passing the assessment, open Trader agreement. Signing is compulsory
 before sponsorship review. The agreement stays pending until the company
 provides its contract. No contract terms are included in this preview.
+
+Support is available from the floating Support button. Basic company answers use
+an Academy guide without credentials. Generative AI needs SUPPORT_AI_API_KEY;
+human replies need a registered, verified staff account in SUPPORT_STAFF_EMAILS.
+Conversation requests are saved and queued; an agent is not automatically online.
+See README.md for staff access and DEPLOYMENT.md for the hosted configuration.

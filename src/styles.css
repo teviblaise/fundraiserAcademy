@@ -4,6 +4,8 @@
 @source "../public/app.js";
 @source "../public/client.js";
 @source "../public/client-summary.js";
+@source "../public/support-chat.js";
+@source "../public/support-agent.js";
 @source "../public/contract.js";
 @source "../public/dashboard.js";
 @source "../public/certificates.js";
@@ -20,7 +22,10 @@
 }
 
 @layer base {
+  .support-dialog::backdrop { background: #0009; }
+  .support-dialog[open] { display: flex; flex-direction: column; }
   @media print {
+    #academy-support-launcher, .support-dialog { display: none !important; }
     body:has(#certificate-preview) header, body:has(#certificate-preview) footer, body:has(#certificate-preview) main > :not(#certificate-preview), #certificate-preview > div { display:none !important; }
     body:has(#certificate-preview) .wrap { width:100%;padding:0;margin:0; }
     #certificate-preview { margin:0 !important; }

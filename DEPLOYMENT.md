@@ -146,6 +146,25 @@ credentials, Git metadata, and installed dependencies. Deploying this archive
 starts with no users; migrating existing records requires a separate protected
 database/key backup and restore.
 
-Email verification for notifications is implemented. Account recovery, reviewer
+Required signup confirmation and optional email verification for alerts are implemented. Account recovery, reviewer
 administration, complete privacy/retention policies, and funding operations remain
 unfinished; review README.md and ACADEMY_PLAYBOOK.md before public enrollment.
+
+
+## Customer support
+
+The Academy guide and persistent handoff queue work without an AI credential.
+For generative replies, add `SUPPORT_AI_API_KEY` securely to Render Environment
+settings and redeploy; optional `SUPPORT_AI_MODEL` defaults to `gpt-4.1-mini`.
+The server requires outbound HTTPS to `api.openai.com`. A key in cloud environment
+settings is separate from Render. Never put the key into browser code or Git.
+
+Set `SUPPORT_STAFF_EMAILS` to your registered, email-verified agent addresses and
+redeploy. Agents sign in normally and open `/support-agent.html`; clients cannot
+access their inbox. The human queue retains the transcript and stops AI replies
+when a handoff is requested. Until you configure staff, requests remain queued.
+The alternative local `npm run support:staff -- grant --email ...` command operates
+on `DATABASE_PATH`; free Render plans may not offer shell access, so the environment
+allowlist is the simpler hosted setup. Staff verification still needs your Resend
+sender configuration. Confirm a real agent can claim and reply to a test request
+before advertising staffed support hours.

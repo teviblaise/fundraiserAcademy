@@ -64,3 +64,15 @@ for (const [id, endpoint] of [['interest-form', '/api/register'], ['login-form',
 }
 const year = document.querySelector('#year');
 if (year) year.textContent = String(new Date().getFullYear());
+
+// Load support independently so it never delays registration or the trading desk.
+const supportLauncher = document.createElement('a');
+supportLauncher.id = 'academy-support-launcher';
+supportLauncher.href = '/support.html';
+supportLauncher.className = 'fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-lime/30 bg-lime px-5 py-3 text-sm font-semibold text-black shadow-xl';
+supportLauncher.textContent = 'Support';
+supportLauncher.setAttribute('aria-label', 'Open Fundraiser Academy customer support');
+document.body.append(supportLauncher);
+import('/support-chat.js').then(module => module.initSupportChat(supportLauncher)).catch(() => {
+  // The ordinary support-page link remains usable if the widget cannot load.
+});

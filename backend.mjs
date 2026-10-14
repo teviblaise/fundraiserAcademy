@@ -8,6 +8,7 @@ import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
 import {createMarketData} from './market-data.mjs';
+import {createSupport} from './support.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -44,7 +45,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -77,6 +78,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
   const marketData=injectedMarketData ?? createMarketData();
+  const support=createSupport(db,{now,...supportOptions});
   const queues = new Map();
   const timerPending = new Set();
   const streams = new Map();
@@ -380,6 +382,38 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         session(res,row.id); respond(res,200,{user:profileView(row)}); return;
       }
       const current = user(req);
+      if (pathname === '/api/support' || pathname.startsWith('/api/support/')) {
+        // Signup confirmation is required for trading. Pending users still need
+        // authenticated support to resolve confirmation and onboarding problems.
+        requireOrigin(req);
+        const query = new URL(req.url, 'http://localhost').searchParams;
+        let result;
+        if (req.method === 'GET') {
+          limit(req, `support-read:${current.id}`, 120, 60000);
+          if (pathname === '/api/support') result = support.clientView(current, { ...(query.has('conversationId') ? { conversationId: query.get('conversationId') } : {}), before: query.get('before') });
+          else if (pathname === '/api/support/conversations') result = support.clientList(current, { before: query.get('before') });
+          else if (pathname === '/api/support/staff/conversations') result = support.staffList(current, { before: query.get('before'), status: query.get('status') || 'active' });
+          else {
+            const match = /^\/api\/support\/staff\/conversations\/([^/]+)$/.exec(pathname);
+            if (match) result = support.staffView(current, match[1], query.get('before'));
+          }
+        } else if (req.method === 'POST') {
+          limit(req, `support-write:${current.id}`, 100, 600000);
+          const data = await body(req);
+          user(req);
+          if (pathname === '/api/support/messages') result = await support.message(current, data);
+          else if (pathname === '/api/support/handoff') result = support.handoff(current, data);
+          else {
+            const match = /^\/api\/support\/staff\/conversations\/([^/]+)\/(claim|reply|close)$/.exec(pathname);
+            if (match) result = support.staffAction(current, match[1], match[2], data);
+          }
+        }
+        if (!result) throw new RequestError(404, 'Support endpoint not found.');
+        // A long provider request must not send private chat history to a session
+        // that was signed out while the answer was being generated.
+        user(req);
+        respond(res, 200, result); return;
+      }
       const pendingRoutes = ['/api/me', '/api/profile', '/api/logout', '/api/notification-settings', '/api/email/resend-confirmation', '/api/email/request-verification', '/api/email/preferences', '/api/push/subscribe', '/api/push/unsubscribe'];
       if (!current.assessmentAccess && !pendingRoutes.includes(pathname)) throw new RequestError(403, 'Confirm your email address before starting or continuing the trading assessment. Open the confirmation link from your inbox or request a new one from your client dashboard.', 'EMAIL_CONFIRMATION_REQUIRED');
       if (req.method === 'POST' && pathname === '/api/email/resend-confirmation') {
@@ -575,7 +609,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     for (const connections of [...streams.values()]) for (const connection of [...connections]) endStream(connection);
     marketData.close?.();
     delivery.close();
-    closePromise = Promise.allSettled([...queues.values()]).then(() => db.close());
+    closePromise = Promise.allSettled([...queues.values(),support.close()]).then(() => db.close());
     return closePromise;
   } };
 }
