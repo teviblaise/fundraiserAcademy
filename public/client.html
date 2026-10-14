@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Your Fundraiser Academy client dashboard: profile, assessment progress, certificates, and trader agreement.">
+  <meta name="theme-color" content="#0b0b0b"><title>Client dashboard | Fundraiser Academy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script><script type="module" src="/client.js"></script>
+</head>
+<body>
+  <header class="header wrap">
+    <a href="/" class="brand" aria-label="Fundraiser Academy home"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="navigation">Menu <span>☰</span></button>
+    <nav id="navigation" aria-label="Client navigation"><a href="/client.html" aria-current="page">Client dashboard</a><a data-assessment-link href="/dashboard.html">Trading desk</a><a data-assessment-link href="/certificates.html">Certificates</a><a data-assessment-link href="/contract.html">Trader agreement</a></nav>
+  </header>
+  <div id="client-loading" class="wrap py-12" role="status" aria-live="polite"><p class="eyebrow">YOUR CLIENT DASHBOARD</p><p id="client-loading-message">Loading your account details…</p><button id="retry-profile" class="desk-action mt-4" type="button" hidden>Try again</button><a class="desk-action mt-4 inline-block" href="/login.html" hidden id="login-link">Log in</a></div>
+  <main class="wrap pb-12" hidden>
+    <section class="flex flex-wrap items-start justify-between gap-5 pt-6 pb-8">
+      <div class="min-w-0"><p class="eyebrow mb-3">YOUR CLIENT DASHBOARD</p><h1 class="mb-3 break-words text-4xl tracking-tight md:text-5xl">Welcome, <em id="welcome-name"></em></h1><p class="max-w-2xl text-sm text-muted">Your details, your progress, and your next step. Build a track record that speaks for itself.</p></div>
+      <div class="flex flex-wrap gap-2"><button id="refresh-overview" type="button" class="desk-action">Refresh overview</button><button id="sign-out" type="button" class="desk-action">Log out</button></div>
+    </section>
+    <p id="overview-status" class="mb-5 text-xs text-muted" role="status" aria-live="polite">Loading your assessment overview…</p>
+    <p id="logout-status" class="mb-4 text-sm" role="status" aria-live="polite" hidden></p>
+    <section id="confirm-email" class="mb-6 rounded-xl border border-lime/40 bg-lime/10 p-6" hidden aria-labelledby="confirmation-heading"><p class="eyebrow mb-3 text-lime">ONE STEP BEFORE YOU TRADE</p><h2 id="confirmation-heading" class="mb-4 text-2xl tracking-tight">Confirm your email address</h2><p class="mb-4 max-w-3xl text-sm">We need to confirm <strong id="confirmation-email" class="break-all"></strong> before you can start your assessment. Open the confirmation link in your inbox, then return here and refresh your overview.</p><p class="mb-5 text-xs text-muted">Check your spam folder too. Account confirmation is separate from optional trade emails and price alerts.</p><div class="flex flex-wrap items-center gap-3"><button id="resend-confirmation" type="button" class="button">Resend confirmation email</button><button id="check-confirmation" type="button" class="desk-action">I’ve confirmed my email</button></div><p id="confirmation-status" class="mt-4 text-sm" role="status" aria-live="polite">Checking email delivery availability…</p></section>
+    <section class="mb-6 grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]" aria-label="Next step and client profile">
+      <article class="min-w-0 rounded-xl border border-lime/40 bg-[#151515] p-6 md:p-8">
+        <p class="eyebrow mb-4 text-lime">YOUR NEXT STEP</p><h2 id="next-heading" class="mb-4 text-3xl tracking-tight">Your next trading chapter starts here</h2>
+        <p id="next-detail" class="mb-6 max-w-2xl text-sm text-muted">Open your practice desk to demonstrate your strategy with a $10,000 demo account.</p>
+        <div class="flex flex-wrap items-center gap-4"><a id="next-action" class="button" href="/dashboard.html">Continue assessment <span aria-hidden="true">→</span></a><a class="text-xs font-semibold" href="/qualification.html">View assessment rules →</a></div>
+        <p class="mt-5 text-[11px] text-muted">Demo funds only. Assessment completion and signing an agreement do not automatically approve sponsorship.</p>
+      </article>
+      <article class="desk-card min-w-0">
+        <div class="mb-5 flex items-center gap-4"><span id="profile-initials" class="grid size-12 shrink-0 place-items-center rounded-full border border-lime/40 bg-lime/10 text-sm font-semibold text-lime" aria-hidden="true"></span><div class="min-w-0"><h2 id="profile-name" class="mb-1 break-words text-xl tracking-tight"></h2><p class="text-xs text-muted">Fundraiser Academy client</p></div></div>
+        <dl class="space-y-3 text-sm"><div><dt class="metric-label mb-1">Email address</dt><dd id="profile-email" class="break-all"></dd></div><div><dt class="metric-label mb-1">Trading interest</dt><dd id="profile-market"></dd></div><div class="flex flex-wrap gap-x-8 gap-y-3"><div><dt class="metric-label mb-1">Client ID</dt><dd id="profile-id" class="break-all"></dd></div><div><dt class="metric-label mb-1">Joined</dt><dd id="profile-joined"></dd></div></div></dl>
+        <a class="desk-action mt-5 inline-block" href="#account-details">Edit account details</a>
+      </article>
+    </section>
+    <section class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Assessment account summary">
+      <article class="desk-card min-w-0"><p class="metric-label">Demo balance</p><strong id="summary-balance" class="metric-value">—</strong><p class="text-xs text-muted">Realized trades included</p></article>
+      <article class="desk-card min-w-0"><p class="metric-label">Demo equity</p><strong id="summary-equity" class="metric-value">—</strong><p id="summary-floating" class="text-xs text-muted">Awaiting assessment snapshot</p></article>
+      <article class="desk-card min-w-0"><p class="metric-label">Realized profit</p><strong id="summary-profit" class="metric-value">—</strong><p id="summary-target" class="text-xs text-muted">10% profit target</p></article>
+      <article class="desk-card min-w-0"><p class="metric-label">Trading days</p><strong id="summary-days" class="metric-value">—</strong><p class="text-xs text-muted">At least 3 distinct UTC days</p></article>
+    </section>
+    <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div class="min-w-0 space-y-6">
+        <section class="desk-card" aria-labelledby="assessment-heading">
+          <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 id="assessment-heading" class="mb-0 text-2xl tracking-tight">Your assessment</h2><span id="assessment-status" class="rounded-full border border-line px-3 py-1 text-xs">Loading status…</span></div>
+          <p id="assessment-detail" class="mb-5 text-sm text-muted">Checking your saved assessment progress.</p>
+          <label class="metric-label" for="assessment-progress">Realized profit target</label><progress id="assessment-progress" class="risk-meter" max="100" value="0"></progress><p id="assessment-progress-label" class="mb-5 text-xs text-muted">Waiting for your account snapshot</p>
+          <dl class="mb-5 grid grid-cols-2 gap-4 border-y border-line py-5 text-sm"><div><dt class="metric-label">Open positions</dt><dd id="summary-positions">—</dd></div><div><dt class="metric-label">Closed trades</dt><dd id="summary-trades">—</dd></div><div><dt class="metric-label">Pending orders</dt><dd id="summary-pending">—</dd></div><div><dt class="metric-label">Free margin</dt><dd id="summary-margin">—</dd></div></dl>
+          <div class="grid gap-4 sm:grid-cols-2"><div><p class="metric-label">Daily loss · 5%</p><p id="daily-loss" class="text-sm">—</p><p id="daily-loss-note" class="mt-1 text-xs text-muted">Based on UTC day-start equity</p></div><div><p class="metric-label">Total loss · 10%</p><p id="total-loss" class="text-sm">—</p><p class="mt-1 text-xs text-muted">Based on initial demo balance</p></div></div>
+          <p id="valuation-note" class="mt-5 text-xs text-muted">This overview uses a saved snapshot. Open the trading desk for continuously updated reference prices and risk controls.</p><a data-assessment-link class="desk-action mt-5 inline-block" href="/dashboard.html">Open trading desk →</a>
+        </section>
+        <section class="desk-card" aria-labelledby="journey-heading">
+          <h2 id="journey-heading" class="mb-6 text-2xl tracking-tight">Your pathway</h2>
+          <ol class="space-y-5"><li class="flex gap-4"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-lime/10 text-xs font-semibold text-lime" aria-hidden="true">01</span><div><h3 class="text-sm">Demonstrate your skill</h3><p id="journey-assessment" class="mt-1 text-xs text-muted">Complete your assessment on the practice desk.</p></div></li><li class="flex gap-4"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-lime/10 text-xs font-semibold text-lime" aria-hidden="true">02</span><div><h3 class="text-sm">Collect your certificate</h3><p id="journey-certificate" class="mt-1 text-xs text-muted">Checking completion certificates…</p></div></li><li class="flex gap-4"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-lime/10 text-xs font-semibold text-lime" aria-hidden="true">03</span><div><h3 class="text-sm">Sign the required agreement</h3><p id="journey-contract" class="mt-1 text-xs text-muted">Checking agreement status…</p></div></li><li class="flex gap-4"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-lime/10 text-xs font-semibold text-lime" aria-hidden="true">04</span><div><h3 class="text-sm">Sponsorship review</h3><p id="journey-review" class="mt-1 text-xs text-muted">Eligibility and company review are required before any sponsorship decision.</p></div></li></ol>
+        </section>
+      </div>
+      <div class="min-w-0 space-y-6">
+        <section id="account-details" class="desk-card" aria-labelledby="details-heading">
+          <p class="eyebrow mb-3">YOUR PROFILE</p><h2 id="details-heading" class="mb-4 text-2xl tracking-tight">Account details</h2>
+          <form id="profile-form"><label for="profile-first-name">First name</label><input id="profile-first-name" name="firstName" autocomplete="given-name" maxlength="100" required><label for="profile-other-names">Other names <span class="font-normal text-muted">(optional)</span></label><input id="profile-other-names" name="otherNames" autocomplete="family-name" maxlength="100" aria-describedby="profile-names-hint"><p id="profile-names-hint" class="mb-4 text-xs text-muted">Add your middle and last names here. Your full name can be up to 100 characters.</p><label for="profile-trading-market">Trading interest</label><select id="profile-trading-market" name="market" required><option value="I trade forex">I trade forex</option><option value="I trade crypto">I trade crypto</option><option value="I trade both">I trade both</option></select><p class="mb-5 text-xs text-muted">Your email and client ID stay linked to this account. Profile edits do not alter issued certificates or signed agreements. <a href="/certificates.html" class="text-lime underline underline-offset-4">Manage your certificate display name.</a></p><button id="save-profile" type="submit" class="button">Save account details</button><p id="profile-status" class="mt-4 text-sm" role="status" aria-live="polite"></p></form>
+        </section>
+        <section class="desk-card" aria-labelledby="certificates-heading"><p class="eyebrow mb-3">YOUR ACHIEVEMENTS</p><h2 id="certificates-heading" class="mb-3 text-2xl tracking-tight">Certificates <span id="certificate-count" class="text-lime">—</span></h2><p id="certificate-detail" class="mb-5 text-sm text-muted">Loading your certificate records…</p><a id="latest-certificate" class="desk-action mb-3 inline-block" hidden>Download latest certificate</a><a data-assessment-link class="desk-action inline-block" href="/certificates.html">View all certificates →</a></section>
+        <section class="desk-card" aria-labelledby="notifications-heading"><h2 id="notifications-heading" class="mb-5 text-2xl tracking-tight">Email &amp; notifications</h2><dl class="space-y-3 text-sm"><div><dt class="metric-label mb-1">Email verification</dt><dd id="email-verification">Checking status…</dd></div><div><dt class="metric-label mb-1">Email alerts</dt><dd id="email-alert-status">Checking status…</dd></div><div><dt class="metric-label mb-1">Background push</dt><dd id="push-alert-status">Checking status…</dd></div></dl><p id="notification-detail" class="mt-4 text-xs text-muted">Trade notifications and price alerts are managed on your practice desk.</p><a data-assessment-link class="desk-action mt-5 inline-block" href="/dashboard.html#enable-notifications">Manage notifications →</a></section>
+      </div>
+    </div>
+  </main>
+  <footer class="wrap"><div class="footer-top"><a class="brand" href="/"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a><p>Your skill. Our backing.</p><div class="flex flex-wrap gap-5 text-xs"><a href="/contact.html">Get in touch</a><a href="/privacy.html">Privacy</a><a href="#">Back to top ↑</a></div></div><p class="risk">Fundraiser Academy sponsors approved third-party prop accounts. This is a simulated assessment with demo funds. Assessment completion, certificates, and agreement signing do not guarantee sponsorship or profits. Covered losses and profit sharing follow the company’s written agreement and the account provider’s rules.</p><div class="footer-bottom"><span>© <span id="year">2026</span> Fundraiser Academy</span><span>Your skill. Our backing.</span></div></footer>
+</body>
+</html>

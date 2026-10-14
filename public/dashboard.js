@@ -61,6 +61,10 @@ async function api(endpoint, data) {
 }
 try {
   const result = await api('/api/me');
+  if (result.user.assessmentAccess === false) {
+    window.location.replace('/client.html');
+    await new Promise(() => {});
+  }
   traderId=result.user.id;
   applyAccount((await api('/api/account')).account);
   $('trader-name').textContent = `Welcome, ${result.user.name}. Your practice account is saved on the server.`;

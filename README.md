@@ -47,11 +47,14 @@ demo registration and a simulated trading dashboard.
 
 Pages: home (`index.html`), funding model (`program.html`), qualification
 (`qualification.html`), academy mission (`about.html`), questions (`faq.html`),
-demo registration (`contact.html`), privacy notice (`privacy.html`), and trading
-simulator (`dashboard.html`). Registration leads directly to the dashboard.
-Registration creates an account in the backend, establishes a session, and opens
-its trading dashboard. Returning users log in at `login.html`. Each user has a
-separate practice account. Registration and trading data persist in SQLite.
+demo registration (`contact.html`), privacy notice (`privacy.html`), trading
+simulator (`dashboard.html`), and client overview (`client.html`). Registration
+collects first name, optional other names, and email, then opens the client
+dashboard. New users must confirm the one-time email link before assessment
+access. The client dashboard shows saved profile details, email status, current
+assessment progress, certificates, and the required agreement step. Users can
+update their names and preferred market; email remains read-only. Returning users
+log in at `login.html`. Each user has a separate practice account. Registration and trading data persist in SQLite.
 
 ## Backend
 
@@ -215,7 +218,18 @@ registered service worker to display OS/browser notifications when the dashboard
 is closed or hidden. In a visible dashboard it sends a popup message instead.
 Permission and browser/OS support are required; delivery is not guaranteed.
 
-Email uses Resend, with user opt-in and a confirmation link before alerts are sent.
+New signups require an email confirmation link delivered through Resend. Links
+expire after 30 minutes, are single-use, and can be resent after one minute.
+Assessment access is enforced on the server: an unconfirmed new user can manage
+their profile and request another confirmation email, but cannot trade, reset,
+stream market data, or enter qualification steps. Accounts created before this
+requirement retain their existing assessment access and records; their actual
+email-verification status remains visible. If delivery is not configured, the
+account remains pending and the dashboard explains that confirmation email
+is unavailable. Queued or provider-accepted mail is not proof of inbox receipt.
+
+Confirming an account email does not enable optional trading alerts. Notification
+emails use a separate explicit opt-in and ownership verification.
 Configure `RESEND_API_KEY`, `EMAIL_FROM` (a verified sender), and `APP_ORIGIN` (the
 public HTTPS origin). Users can disable email and unsubscribe this browser from
 push. Logout removes this device's push endpoint; closing the page leaves it active.

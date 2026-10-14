@@ -11,9 +11,13 @@ and `COOKIE_SECURE=true`.
 
 After Render assigns the HTTPS URL, set `APP_ORIGIN` to that exact URL without
 a trailing slash if using a custom domain. The server automatically uses
-Render's `RENDER_EXTERNAL_URL` for its default public origin. Registration, simulated
-trading, certificates, and popup notifications can be tried without email keys.
-Email requires a verified Resend sender and securely configured provider settings.
+Render's `RENDER_EXTERNAL_URL` for its default public origin. Public pages and
+pending client profiles can be viewed before email setup.
+New users must confirm email before trading or assessment access. Verify a domain
+in Resend, then add `RESEND_API_KEY` and `EMAIL_FROM` (a sender on that domain) in
+Render Environment settings and redeploy. Render supplies the public HTTPS origin.
+If sender setup is incomplete, registrations stay pending; they can resend
+confirmation once delivery is configured. Existing accounts retain prior access.
 
 Crypto reference execution and daily forex history need no API keys: allow outbound HTTPS to
 `api.exchange.coinbase.com` and `api.frankfurter.dev`. Intraday forex execution
@@ -113,7 +117,7 @@ volume, ensure the data directory is writable by container UID 1000.
 - `APP_ORIGIN`: the exact public HTTPS origin, with no trailing slash/path.
 - `COOKIE_SECURE=true`: session cookies must use HTTPS.
 - `DATABASE_PATH`: a file on persistent storage, not a temporary build directory.
-- `RESEND_API_KEY` and `EMAIL_FROM`: required for opted-in verified email delivery.
+- `RESEND_API_KEY` and `EMAIL_FROM`: required for new-account confirmation and opted-in alert emails.
 
 Preserve both the SQLite database and `vapid.json` in its directory. Replacing the
 VAPID key pair invalidates existing browser push subscriptions. Back up SQLite
@@ -121,8 +125,9 @@ using a SQLite-aware process and restrict access to database and backup files.
 
 ## Verify after deployment
 
-Visit registration, create a disposable test account, and confirm the dashboard
-opens. Test login/logout, a simulated trade, price alert, and popup. Confirm records
+Visit registration, use an email address you control, and confirm the client
+dashboard opens in a pending state. Confirm the one-time inbox link, then test
+assessment access, login/logout, a simulated trade, price alert, and popup. Confirm records
 persist across a server restart. My certificates should be accessible only after
 login. Use the automated tests to verify certificate rules without forging a live
 candidate result. Test a real email confirmation and an opted-in push notification

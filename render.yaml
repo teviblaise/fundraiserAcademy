@@ -19,3 +19,9 @@ services:
       # services must add this key in their own Environment settings.
       - key: TWELVE_DATA_API_KEY
         sync: false
+      # New registrations must confirm their email before assessment access.
+      # Use a sender on a domain verified in Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

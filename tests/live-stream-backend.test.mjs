@@ -1,3 +1,4 @@
+import { testDeliveryOptions, confirmRegistration } from './helpers/email-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -26,7 +27,7 @@ async function harness() {
   const folder = await mkdtemp(path.join(tmpdir(), 'fa-live-account-'));
   const database = path.join(folder, 'academy.sqlite');
   const reference = createReferenceFixture();
-  const options = { marketData: reference, autoTick: false, streamTickMs: 20 };
+  const options = { marketData: reference, autoTick: false, streamTickMs: 20, deliveryOptions: testDeliveryOptions };
   let backend = createBackend(database, options);
   const clients = [];
   const server = http.createServer((req, res) => backend.handle(req, res, new URL(req.url, 'http://localhost').pathname));
@@ -43,6 +44,7 @@ async function harness() {
   async function register(email = 'live-one@example.com') {
     const result = await request('/api/register', { name: 'Live Account Trader', email, password: 'a-long-live-account-test-password', market: 'I trade both', consent: true });
     assert.equal(result.status, 201);
+    await confirmRegistration(database,request,result);
     return result;
   }
   async function connect(symbol, cookie) {

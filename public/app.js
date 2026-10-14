@@ -1,12 +1,12 @@
 const toggle = document.querySelector('.menu-toggle');
 const navigation = document.querySelector('#navigation');
-toggle.addEventListener('click', () => {
+toggle?.addEventListener('click', () => {
   const expanded = toggle.getAttribute('aria-expanded') !== 'true';
   toggle.setAttribute('aria-expanded', String(expanded));
-  navigation.classList.toggle('open', expanded);
+  navigation?.classList.toggle('open', expanded);
 });
-navigation.querySelectorAll('a').forEach(link => link.addEventListener('click', () => {
-  toggle.setAttribute('aria-expanded', 'false');
+navigation?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => {
+  toggle?.setAttribute('aria-expanded', 'false');
   navigation.classList.remove('open');
 }));
 async function authRequest(endpoint, data) {
@@ -15,22 +15,52 @@ async function authRequest(endpoint, data) {
   if (!response.ok) throw new Error(result.error || 'Request failed.');
   return result;
 }
+async function loginDestination(user) {
+  if (user?.assessmentAccess === false) return '/client.html';
+  try {
+    const response = await fetch('/api/contract', { signal: AbortSignal.timeout(2500) });
+    if (response.ok) {
+      const progress = await response.json();
+      if (progress.assessmentPassed && progress.status !== 'signed') return '/contract.html';
+    }
+  } catch {
+    // A successful login still opens the dashboard if optional agreement status is unavailable.
+  }
+  return '/client.html';
+}
 for (const [id, endpoint] of [['interest-form', '/api/register'], ['login-form', '/api/login']]) {
   const form = document.getElementById(id);
+  const firstName = form?.elements.namedItem('firstName');
+  const otherNames = form?.elements.namedItem('otherNames');
+  const cleanName = value => value.trim().replace(/\s+/gu, ' ');
+  function validateNameLength() {
+    if (!firstName) return;
+    const name = [cleanName(firstName.value), cleanName(otherNames?.value || '')].filter(Boolean).join(' ');
+    firstName.setCustomValidity(name.length > 100 ? 'Your first name and other names together must be 100 characters or fewer.' : '');
+  }
+  firstName?.addEventListener('input', validateNameLength);
+  otherNames?.addEventListener('input', validateNameLength);
   form?.addEventListener('submit', async event => {
     event.preventDefault();
+    validateNameLength();
+    if (!form.reportValidity()) return;
     const button = form.querySelector('button[type="submit"]');
     const status = form.querySelector('[role="status"]');
     button.disabled = true; status.textContent = 'Connecting…';
     try {
       const values = Object.fromEntries(new FormData(form));
-      await authRequest(endpoint, { name: values.name, email: values.email, password: values.password, market: values.experience, consent: values.consent === 'on' });
-      if(endpoint==='/api/login'){
-        const agreement=await fetch('/api/contract');
-        if(agreement.ok){const progress=await agreement.json();if(progress.assessmentPassed&&progress.status!=='signed'){window.location.assign('/contract.html');return;}}
+      const data = { email: values.email.trim(), password: values.password };
+      if (endpoint === '/api/register') {
+        data.firstName = cleanName(values.firstName);
+        data.otherNames = cleanName(values.otherNames || '');
+        data.market = values.experience;
+        data.consent = values.consent === 'on';
       }
-      window.location.assign('/dashboard.html');
+      const result = await authRequest(endpoint, data);
+      status.textContent = 'Opening your dashboard…';
+      window.location.assign(endpoint === '/api/login' ? await loginDestination(result.user) : '/client.html');
     } catch (error) { status.textContent = error.message; button.disabled = false; }
   });
 }
-document.querySelector('#year').textContent = String(new Date().getFullYear());
+const year = document.querySelector('#year');
+if (year) year.textContent = String(new Date().getFullYear());

@@ -1,3 +1,4 @@
+import { testDeliveryOptions, confirmRegistration } from './helpers/email-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -12,7 +13,7 @@ async function harness(options={}){
   const folder=await mkdtemp(path.join(tmpdir(),'fa-reference-api-'));
   const database=path.join(folder,'academy.sqlite');
   const reference=createReferenceFixture();
-  const backend=createBackend(database,{marketData:reference,autoTick:false,...options});
+  const backend=createBackend(database,{marketData:reference,autoTick:false,deliveryOptions:testDeliveryOptions,...options});
   const server=http.createServer((req,res)=>backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`;
@@ -21,6 +22,7 @@ async function harness(options={}){
     return {status:response.status,body:await response.json(),cookie:response.headers.get('set-cookie')?.split(';')[0]};
   }
   const user=await request('/api/register',{name:'Reference API Trader',email:'reference-api@example.com',password:'a-long-reference-api-test-password',market:'I trade both',consent:true});
+  await confirmRegistration(database,request,user);
   return {reference,backend,database,request,cookie:user.cookie,userId:user.body.user.id,async close(){await new Promise(resolve=>server.close(resolve));await backend.close();await rm(folder,{recursive:true,force:true});}};
 }
 

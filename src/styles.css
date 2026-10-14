@@ -2,6 +2,8 @@
 @import "tailwindcss";
 @source "../public/*.html";
 @source "../public/app.js";
+@source "../public/client.js";
+@source "../public/client-summary.js";
 @source "../public/contract.js";
 @source "../public/dashboard.js";
 @source "../public/certificates.js";

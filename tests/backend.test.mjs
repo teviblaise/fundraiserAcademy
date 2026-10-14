@@ -1,3 +1,4 @@
+import { testDeliveryOptions, confirmRegistration } from './helpers/email-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -12,7 +13,7 @@ test('backend registration, authentication, isolated trading records, reset audi
   const folder = await mkdtemp(path.join(tmpdir(),'fa-api-'));
   const database = path.join(folder,'test.sqlite');
   const reference=createReferenceFixture();
-  const options={marketData:reference,autoTick:false};
+  const options={marketData:reference,autoTick:false,deliveryOptions:testDeliveryOptions};
   let backend = createBackend(database,options);
   const server = http.createServer((req,res) => backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
@@ -28,10 +29,12 @@ test('backend registration, authentication, isolated trading records, reset audi
     assert.equal((await request('/api/register',{...registration,password:'short'})).status,400);
     assert.equal((await request('/api/register',registration,undefined,{Origin:'https://other.example'})).status,403);
     const first=await request('/api/register',registration);
+    await confirmRegistration(database,request,first);
     assert.equal(first.status,201); assert.match(first.header,/HttpOnly/); assert.match(first.header,/SameSite=Lax/); assert.ok(!('password' in first.body.user));
     assert.equal((await request('/api/market-reference?symbol=UNSUPPORTED',undefined,first.cookie)).status,400);
     assert.equal((await request('/api/market-reference?symbol=BTCUSD&interval=invalid',undefined,first.cookie)).status,400);
     const second=await request('/api/register',{...registration,email:'two@example.com',name:'Trader Two'});
+    await confirmRegistration(database,request,second);
     assert.equal(second.status,201);
     assert.equal((await request('/api/register',registration)).status,409);
     assert.equal((await request('/api/login',{email:registration.email,password:'a-different-long-password'})).status,401);
