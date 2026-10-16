@@ -41,3 +41,8 @@ an Academy guide without credentials. Generative AI needs SUPPORT_AI_API_KEY;
 human replies need a registered, verified staff account in SUPPORT_STAFF_EMAILS.
 Conversation requests are saved and queued; an agent is not automatically online.
 See README.md for staff access and DEPLOYMENT.md for the hosted configuration.
+
+The Contract trader leaderboard at /leaderboard.html shows consenting current
+contract signers by verified qualifying-assessment return. It does not show live
+sponsored-account results. Sign in on that page to choose a public alias and
+visibility. The board stays empty until eligible traders opt in.

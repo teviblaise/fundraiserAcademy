@@ -354,3 +354,35 @@ a CLI revoke does not override the environment allowlist. Staff roles grant supp
 inbox access, not funding reviewer or trading privileges. Keep the database and
 support transcripts on private persistent storage. API and browser tests inject
 AI and email transports; they do not establish live provider billing or inbox receipt.
+
+
+### Contract trader leaderboard
+
+`leaderboard.html` is a public ranking of opted-in traders who signed the current
+academy contract. It compares the realized return on the reference-priced
+qualifying assessment linked to that signature. Sponsored prop-account performance
+is not imported into this application and is not represented by these rankings.
+
+A trader must have an owned reference-price certificate showing at least three
+trading days and a 10% return, a matching signature for the currently active
+contract document, and enabled leaderboard visibility with a public alias.
+Participation is private by default. The public API exposes only an opaque entry
+ID, alias, qualification return, realized demo profit, trading days, completion
+date, and rank. Email, legal name, account IDs, contract details, and certificate
+IDs stay private. The owner can update their alias or hide their entry at
+`/leaderboard.html`; pending clients can set preferences, but do not become eligible
+until qualification and signing are complete.
+
+Rankings use realized percentage return, rounded to two decimals. Equal displayed
+returns share a competition rank (for example 1, 1, 3); stable completion-date and
+public-ID ordering makes pagination predictable. Rankings use the signed
+certificate snapshot rather than current practice balance, so resetting a demo or
+renaming a certificate cannot manufacture leaderboard returns. A newly published
+contract requires a fresh signature before a trader is eligible again.
+
+GET `/api/leaderboard?limit=20&offset=0` is public, bounded, and does not request
+market prices. GET/POST `/api/leaderboard/preferences` is authenticated and owner
+bound; updates accept visibility and alias only, never client scores or contract
+status. No sample traders or mock performance are published. Until a real contract
+is supplied, signed, and participants opt in, the leaderboard has an honest empty
+state. A leaderboard position is not a sponsorship approval or a live profit claim.

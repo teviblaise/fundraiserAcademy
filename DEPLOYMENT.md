@@ -168,3 +168,18 @@ on `DATABASE_PATH`; free Render plans may not offer shell access, so the environ
 allowlist is the simpler hosted setup. Staff verification still needs your Resend
 sender configuration. Confirm a real agent can claim and reply to a test request
 before advertising staffed support hours.
+
+
+## Contract trader leaderboard
+
+The public `/leaderboard.html` page and `/api/leaderboard` need no additional
+provider keys. They read qualified certificates, current contract signatures, and
+opt-in aliases from the private application database. Participants manage their
+visibility on that page after signing in. No legal names, emails, account IDs,
+signatures, or certificate documents are exposed by the public ranking.
+
+A company-supplied active agreement is required before any trader is eligible.
+Do not publish test terms or manufacture entries to populate the live page. The
+metric is the signed qualifying assessment's realized return, not post-contract
+sponsored-account profit. Keep the same persistent SQLite database so signatures
+and public participation preferences survive deployments.

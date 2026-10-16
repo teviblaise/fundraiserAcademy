@@ -9,6 +9,7 @@ import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
 import {createMarketData} from './market-data.mjs';
 import {createSupport} from './support.mjs';
+import {createLeaderboard} from './leaderboard.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -77,6 +78,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const profileView = row => publicUser(row, Boolean(db.prepare('SELECT verified FROM notification_preferences WHERE user_id=?').get(row.id)?.verified));
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
+  const leaderboard=createLeaderboard(db,{now});
   const marketData=injectedMarketData ?? createMarketData();
   const support=createSupport(db,{now,...supportOptions});
   const queues = new Map();
@@ -338,6 +340,12 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   async function handle(req, res, pathname) {
     try {
       if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
+      if (req.method === 'GET' && pathname === '/api/leaderboard') {
+        limit(req, 'leaderboard-public', 20, 60000);
+        const query = new URL(req.url, 'http://localhost').searchParams;
+        const number = (key, fallback) => query.has(key) && /^\d+$/.test(query.get(key)) ? Number(query.get(key)) : query.has(key) ? NaN : fallback;
+        respond(res, 200, leaderboard.page({limit:number('limit',20),offset:number('offset',0)})); return;
+      }
       if (req.method === 'GET' && pathname === '/api/registration-status') {
         limit(req, 'registration-status', 120, 60000);
         respond(res, 200, { emailConfirmationAvailable: delivery.status(0).emailAvailable }); return;
@@ -382,6 +390,20 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         session(res,row.id); respond(res,200,{user:profileView(row)}); return;
       }
       const current = user(req);
+      if (pathname === '/api/leaderboard/preferences') {
+        requireOrigin(req);
+        if (req.method === 'GET') {
+          limit(req, `leaderboard-preferences-read:${current.id}`, 60, 60000);
+          respond(res, 200, leaderboard.preferences(current.id)); return;
+        }
+        if (req.method === 'POST') {
+          limit(req, `leaderboard-preferences-write:${current.id}`, 30, 600000);
+          const data = await body(req);
+          user(req);
+          respond(res, 200, leaderboard.setPreferences(current.id, data)); return;
+        }
+        throw new RequestError(405, 'Use GET or POST for leaderboard preferences.');
+      }
       if (pathname === '/api/support' || pathname.startsWith('/api/support/')) {
         // Signup confirmation is required for trading. Pending users still need
         // authenticated support to resolve confirmation and onboarding problems.
