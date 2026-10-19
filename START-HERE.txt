@@ -15,7 +15,7 @@ Registration opens the client dashboard with your saved details. New accounts
 must confirm their email before starting the assessment. Configure Resend with a
 verified sender and a public HTTPS origin for this same server; local HTTP previews
 can show public pages and pending client profiles, but cannot deliver a working
-confirmation link without that setup. Existing accounts keep their prior access.
+confirmation or password-recovery link without that setup. Existing accounts keep their prior access.
 Crypto demo fills use fresh
 Coinbase reference prices; intraday forex fills need a configured Twelve Data key.
 Ten forex pairs are available, including yen and sterling crosses. Their profit,
@@ -46,3 +46,8 @@ The Contract trader leaderboard at /leaderboard.html shows consenting current
 contract signers by verified qualifying-assessment return. It does not show live
 sponsored-account results. Sign in on that page to choose a public alias and
 visibility. The board stays empty until eligible traders opt in.
+
+Forgot your password? Use Forgot password on the login page. The latest email
+link works once and expires in 20 minutes. A reset signs out all devices and
+keeps your assessment history. Delivery uses the same verified Resend sender
+and public HTTPS origin as signup confirmation; no links appear in the API.

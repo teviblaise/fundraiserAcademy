@@ -79,6 +79,22 @@ test('short guide follow-ups use a recent user topic rather than assistant claim
   support.close();
 });
 
+test('password recovery help takes precedence over email verification and challenge reset', async () => {
+  const support = createSupportAI({ apiKey: '' });
+  for (const question of ['I forgot my password, which email link do I need?', 'Reset my password', "I can't sign in"]) {
+    const result = await support.reply({ messages: message(question) });
+    assert.match(result.text, /\/forgot-password\.html/);
+    assert.match(result.text, /20 minutes/);
+    assert.match(result.text, /signs out all devices/);
+    assert.match(result.text, /cannot reset it for you/);
+    assert.doesNotMatch(result.text, /starts a new practice attempt|expire after 30/);
+  }
+  const challenge = await support.reply({ messages: message('Can I reset the challenge?') });
+  assert.match(challenge.text, /practice attempt/);
+  assert.doesNotMatch(challenge.text, /forgot-password/);
+  support.close();
+});
+
 test('provider receives bounded conversation and private fixed grounding through the Responses API', async () => {
   let seen;
   const support = createSupportAI({ apiKey: 'private-support-key', fetchFn: async (url, options) => { seen = { url, options, body: JSON.parse(options.body) }; return response('The minimum is three separate UTC trading days.'); } });

@@ -117,7 +117,7 @@ volume, ensure the data directory is writable by container UID 1000.
 - `APP_ORIGIN`: the exact public HTTPS origin, with no trailing slash/path.
 - `COOKIE_SECURE=true`: session cookies must use HTTPS.
 - `DATABASE_PATH`: a file on persistent storage, not a temporary build directory.
-- `RESEND_API_KEY` and `EMAIL_FROM`: required for new-account confirmation and opted-in alert emails.
+- `RESEND_API_KEY` and `EMAIL_FROM`: required for signup confirmation, password recovery/security notices, and opted-in alert emails.
 
 Preserve both the SQLite database and `vapid.json` in its directory. Replacing the
 VAPID key pair invalidates existing browser push subscriptions. Back up SQLite
@@ -146,7 +146,7 @@ credentials, Git metadata, and installed dependencies. Deploying this archive
 starts with no users; migrating existing records requires a separate protected
 database/key backup and restore.
 
-Required signup confirmation and optional email verification for alerts are implemented. Account recovery, reviewer
+Required signup confirmation, password recovery, and optional email verification for alerts are implemented. Reviewer
 administration, complete privacy/retention policies, and funding operations remain
 unfinished; review README.md and ACADEMY_PLAYBOOK.md before public enrollment.
 
@@ -183,3 +183,14 @@ Do not publish test terms or manufacture entries to populate the live page. The
 metric is the signed qualifying assessment's realized return, not post-contract
 sponsored-account profit. Keep the same persistent SQLite database so signatures
 and public participation preferences survive deployments.
+
+## Password recovery
+
+The Forgot password link on the login page uses the same Resend configuration as
+signup confirmation. Set `RESEND_API_KEY`, a sender verified with Resend in
+`EMAIL_FROM`, and the public HTTPS origin (automatic on Render unless overridden).
+Use an inbox you control to verify request, receipt, single-use reset, old-password
+rejection, and sign-in with the new password. Reset links expire in 20 minutes.
+The request page always gives a generic response, so an accepted request alone
+is not proof of delivery. Security emails are transactional and do not need trade
+alert opt-in. No new secret or paid recovery service is required.

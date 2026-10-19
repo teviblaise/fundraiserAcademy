@@ -27,7 +27,7 @@ Open `http://localhost:3000` in your browser. Keep the terminal running; Ctrl+C
 stops the server. These commands also work in Windows PowerShell. VS Code Live
 Server does not run the backend; use `npm start`.
 
-Registration and trading work without email credentials. New users, records, and
+Public pages and pending registration profiles work without email credentials. New users, records, and
 VAPID keys are created privately in the extracted folder's `data/` directory.
 The release does not include cloud-instance user data or credentials. Email delivery
 needs provider settings; background push needs permissions and network access.
@@ -106,8 +106,8 @@ Configuration:
 - `COOKIE_SECURE=true`: secure cookies; enable with HTTPS for deployment.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
-single-server development backend, not a complete public-launch system. Password
-recovery, funding reviewer tools, account deletion, retention
+single-server development backend, not a complete public-launch system. Funding
+reviewer tools, account deletion, retention
 policy, operational backups, and funding/payout integrations still need implementation.
 Formal program terms and legal/privacy information must be finalized before launch.
 
@@ -311,7 +311,43 @@ Endpoints: GET `/api/certificates`, `/api/certificates/:id`,
 `/api/certificate-preferences`. Notification endpoints: GET
 `/api/notification-settings`; POST `/api/push/subscribe`, `/api/push/unsubscribe`,
 `/api/email/request-verification`, `/api/email/preferences`, `/api/email/verify`.
-Only email confirmation is token-authorized without an existing login.
+Email confirmation and password recovery use their own one-time tokens without an existing login.
+
+
+### Password recovery
+
+Choose **Forgot password** on `login.html`, or open `forgot-password.html`.
+`POST /api/password/forgot` accepts `{ "email": "..." }` and always returns the
+same accepted response, including for unknown accounts, unavailable email, and
+request cooldowns. A response does not confirm an account exists or mail arrived.
+Recovery uses the existing Resend configuration: `RESEND_API_KEY`, a verified
+`EMAIL_FROM`, and a public HTTPS `APP_ORIGIN` reaching this server. Render derives
+its origin automatically. No additional provider or credential is required.
+
+The most recent email contains a random single-use reset link valid for 20 minutes.
+Only its SHA-256 digest is stored in the token table; the raw link is held privately
+in queued mail and scrubbed after delivery, cancellation, expiry, or final failure.
+The link uses a URL fragment removed immediately by the reset page. Opening it does
+not consume it: the user explicitly submits a new password with
+`POST /api/password/reset`. Request limits include an account/email cooldown and
+IP limits. Responses never expose reset tokens or delivery details.
+
+New reset passwords must contain 15–128 characters. Use a unique passphrase or
+a password manager; pasting and long passwords are supported. A successful reset
+atomically changes the salted scrypt password hash, consumes outstanding reset
+links, revokes every session and background push subscription, and ends active
+account streams. A password-changed security email is queued independently of
+optional alert preferences. Sign in again afterwards; there is no automatic login.
+Resetting a password preserves profiles, assessment history, certificates,
+contracts, email confirmation status, and optional email preferences. It does not
+reset the trading challenge. Obvious common passwords and predictable repetitions
+are rejected without requiring arbitrary mixtures of symbols, numbers, or case.
+Reset hashes use a versioned scrypt format with N=32768, r=8, p=3 and a fresh
+random salt. Legacy password hashes remain valid for existing sign-ins. Hashing
+work is bounded to two concurrent operations with a limited waiting queue, so
+expensive authentication requests cannot allocate unlimited memory. Old passwords cannot create a session after a reset
+even when a login was already in flight. Email outages never expose a recovery
+link through a browser, API, or logs; restore delivery rather than bypass ownership.
 
 
 ### Customer support and human handoff

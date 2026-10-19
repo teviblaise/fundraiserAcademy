@@ -98,7 +98,7 @@ Profiles, hashed passwords, sessions, trading state, and audit events use SQLite
 Each user has a separate account. The challenge has a 10% realized-profit target,
 10% static total drawdown from starting balance, and 5% daily drawdown from
 UTC day-start equity. Passing requires no open positions and fills on at least 3 distinct UTC trading days. These practice outcomes
-do not approve funding. Notification email opt-in verification is implemented; password recovery, reviewer workflows,
+do not approve funding. Notification email opt-in verification and secure password recovery are implemented; reviewer workflows,
 account deletion/retention, production operations, and payout integration remain
 unfinished. Paper trades fill at verified market-reference prices without an added spread. Stale or unavailable quotes pause execution; this still does not establish live account performance. Intraday forex requires Twelve Data configuration; daily ECB closes are display-only. Earlier price-model attempts are retained until an explicit reset.
 

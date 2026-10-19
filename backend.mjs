@@ -1,6 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
-import { promisify } from 'node:util';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKETS, ensureTools, setLimits, updateStops, placeLimit, addAlert, notify, applyReferenceQuotes, markQuoteUnavailable, assertExecutableQuote, marketDependencies } from './public/simulator.js';
@@ -10,8 +9,9 @@ import {createContracts,publishContractFile} from './contracts.mjs';
 import {createMarketData} from './market-data.mjs';
 import {createSupport} from './support.mjs';
 import {createLeaderboard} from './leaderboard.mjs';
+import {createPasswordRecovery,passwordResetRequestMessage,passwordResetSuccessMessage} from './password-recovery.mjs';
+import {createPasswordManager,nativeScrypt} from './passwords.mjs';
 
-const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
 const isMarket = symbol => typeof symbol === 'string' && Object.hasOwn(MARKETS, symbol);
@@ -46,7 +46,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, passwordScrypt = nativeScrypt, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -90,11 +90,21 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   let streamCount = 0;
   let stopping = false;
   let closePromise;
+  const passwords = createPasswordManager({ scrypt: passwordScrypt });
+  const passwordRecovery = createPasswordRecovery(db, {
+    delivery, now, isAvailable: () => !stopping,
+    hashPassword: passwords.encode,
+    onReset(id) {
+      for (const connection of [...(streams.get(id) ?? [])]) endStream(connection, 'auth-expired', { error: 'Your password was changed. Please log in again.' });
+    },
+  });
   if(process.env.CONTRACT_FILE)publishContractFile(contracts,{file:process.env.CONTRACT_FILE,version:process.env.CONTRACT_VERSION,title:process.env.CONTRACT_TITLE});
   const rates = new Map();
   const respond = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(data)); };
   function limit(req, group, max, duration) {
-    const key = `${req.socket.remoteAddress}:${group}`;
+    limitKey(`${req.socket.remoteAddress}:${group}`, max, duration);
+  }
+  function limitKey(key, max, duration) {
     const now = Date.now(); const value = rates.get(key);
     if (!value || value.until < now) rates.set(key, { count: 1, until: now + duration });
     else if (++value.count > max) throw new RequestError(429, 'Too many requests. Please try again later.');
@@ -356,22 +366,41 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         try {delivery.verify(data.token);}catch(error){throw new RequestError(400,error.message);}
         respond(res,200,{message:'Your email address is confirmed. You can continue to your client dashboard.'});return;
       }
+      if (req.method === 'POST' && pathname === '/api/password/forgot') {
+        let throttled = false;
+        try { limit(req, 'password-forgot', 200, 600000); }
+        catch (error) { if (error.status !== 429) throw error; throttled = true; }
+        const data = await body(req);
+        if (!throttled) passwordRecovery.request(data.email);
+        respond(res, 202, { message: passwordResetRequestMessage }); return;
+      }
+      if (req.method === 'POST' && pathname === '/api/password/reset') {
+        limit(req, 'password-reset', 100, 600000);
+        const data = await body(req);
+        if (typeof data.token === 'string' && /^[a-f0-9]{64}$/.test(data.token)) limitKey(`password-reset-token:${hash(data.token)}`, 10, 600000);
+        try { await passwordRecovery.reset(data.token, data.password); }
+        catch (error) { if (error.status) throw new RequestError(error.status, error.message, error.code); throw error; }
+        cookie(res, '', 0);
+        respond(res, 200, { message: passwordResetSuccessMessage }); return;
+      }
       if (req.method === 'POST' && ['/api/register','/api/login'].includes(pathname)) {
         limit(req,'auth',20,600000);
         const data = await body(req);
         const email = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
         const password = typeof data.password === 'string' ? data.password : '';
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || password.length < 12 || password.length > 128) throw new RequestError(400,'Enter a valid email and a password with 12–128 characters.');
+        const passwordLength = [...password].length;
+        // Sign-in accepts existing credentials, including passwords created
+        // before Unicode characters were counted by code point at registration.
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || passwordLength < (pathname === '/api/register' ? 12 : 1) || passwordLength > 128) throw new RequestError(400, pathname === '/api/register' ? 'Enter a valid email and a password with 12–128 characters.' : 'Enter a valid email and password.');
         if (pathname === '/api/register') {
           const { name, firstName, otherNames } = registrationName(data);
           if (!preferredMarkets.includes(data.market) || data.consent !== true) throw new RequestError(400,'Enter your name, select your market, and accept the registration notice.');
-          const salt = randomBytes(16).toString('hex');
-          const passwordHash = (await scrypt(password,salt,64)).toString('hex');
+          const passwordHash = await passwords.encodeLegacy(password);
           if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
           let id;
           db.exec('BEGIN');
           try {
-            id = Number(db.prepare('INSERT INTO users(email,name,first_name,other_names,market,password,created_at,email_confirmation_required) VALUES (?,?,?,?,?,?,?,1)').run(email,name,firstName,otherNames,data.market,`${salt}:${passwordHash}`,Date.now()).lastInsertRowid);
+            id = Number(db.prepare('INSERT INTO users(email,name,first_name,other_names,market,password,created_at,email_confirmation_required) VALUES (?,?,?,?,?,?,?,1)').run(email,name,firstName,otherNames,data.market,passwordHash,Date.now()).lastInsertRowid);
             db.prepare('INSERT INTO accounts VALUES (?,?)').run(id,JSON.stringify(createAccount(now())));
             event(id,'registration',{}); db.exec('COMMIT');
           } catch (error) { db.exec('ROLLBACK'); if (error.code?.includes('CONSTRAINT') || error.message.includes('UNIQUE')) throw new RequestError(409,'Unable to register this email. Try logging in.'); throw error; }
@@ -383,10 +412,11 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           session(res,id); respond(res,201,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(id)),confirmation}); return;
         }
         const row = db.prepare('SELECT * FROM users WHERE email=?').get(email);
-        const [salt, stored] = (row?.password || '00000000000000000000000000000000:' + '0'.repeat(128)).split(':');
-        const actual = await scrypt(password,salt,64);
+        const matches = await passwords.verify(password, row?.password);
         if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
-        if (!row || !timingSafeEqual(actual,Buffer.from(stored,'hex'))) throw new RequestError(401,'Email or password is incorrect.');
+        // A reset can complete while scrypt is running. An old credential must
+        // never create a fresh session after the reset revoked existing ones.
+        if (!row || !matches || db.prepare('SELECT password FROM users WHERE id=?').get(row.id)?.password !== row.password) throw new RequestError(401,'Email or password is incorrect.');
         session(res,row.id); respond(res,200,{user:profileView(row)}); return;
       }
       const current = user(req);
@@ -441,6 +471,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if (req.method === 'POST' && pathname === '/api/email/resend-confirmation') {
         limit(req, `email-confirmation:${current.id}`, 10, 600000);
         await body(req);
+        user(req);
         if (current.emailVerified) { respond(res, 200, { user: current, confirmation: { required: current.emailConfirmationRequired, available: delivery.status(current.id).emailAvailable, queued: false, status: 'already_confirmed' } }); return; }
         try {
           const queued = await delivery.requestVerification(current.id, { purpose: 'account' });
@@ -456,7 +487,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(req.method==='GET' && pathname==='/api/market-reference'){
         limit(req,`market-reference:${current.id}`,60,60000);
         const query=new URL(req.url,'http://localhost').searchParams;
-        try {respond(res,200,await marketData.get(query.get('symbol'),query.get('interval')||'15m',query.has('end')?Number(query.get('end')):undefined));}
+        try {const reference=await marketData.get(query.get('symbol'),query.get('interval')||'15m',query.has('end')?Number(query.get('end')):undefined);user(req);respond(res,200,reference);}
         catch(error){respond(res,error.status||503,{error:error.message,unavailable:true});}
         return;
       }
@@ -467,6 +498,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         const keys = Object.keys(data);
         if (!keys.length || keys.some(key => !['firstName', 'otherNames', 'market'].includes(key))) throw new RequestError(400, 'Update only your first name, other names, and preferred market. Your sign-in email cannot be changed here.');
         const updated = await serialized(current.id, () => {
+          user(req);
           const previous = db.prepare('SELECT * FROM users WHERE id=?').get(current.id);
           const names = Object.hasOwn(data, 'firstName') || Object.hasOwn(data, 'otherNames')
             ? structuredName({ firstName: Object.hasOwn(data, 'firstName') ? data.firstName : previous.first_name, otherNames: Object.hasOwn(data, 'otherNames') ? data.otherNames : previous.other_names })
@@ -486,6 +518,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(req.method==='GET' && pathname==='/api/contract'){respond(res,200,contracts.status(current.id));return;}
       if(req.method==='POST' && pathname==='/api/contract/sign'){
         limit(req,'contract-sign',20,600000);const data=await body(req);
+        user(req);
         respond(res,200,contracts.sign(current.id,data));return;
       }
       const contractPath=/^\/api\/contracts\/([a-f0-9-]{36})\/document$/.exec(pathname);
@@ -498,6 +531,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(req.method==='GET' && pathname==='/api/certificate-preferences'){respond(res,200,certificates.preferences(current.id));return;}
       if(req.method==='POST' && pathname==='/api/certificate-preferences'){
         limit(req,'certificate-preferences',30,600000);const data=await body(req);
+        user(req);
         try{respond(res,200,certificates.setPreferences(current.id,data));}catch(error){throw new RequestError(400,error.message);}return;
       }
       const certificatePath=/^\/api\/certificates\/([a-f0-9-]{36})(\.svg)?$/.exec(pathname);
@@ -511,6 +545,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(req.method==='POST' && ['/api/push/subscribe','/api/push/unsubscribe','/api/email/request-verification','/api/email/preferences'].includes(pathname)) {
         limit(req,'notification-settings',20,600000);
         const data=await body(req);
+        user(req);
         try {
           if(pathname==='/api/push/subscribe')delivery.subscribe(current.id,data.subscription);
           else if(pathname==='/api/push/unsubscribe')delivery.unsubscribe(current.id,data.endpoint);
@@ -521,6 +556,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       }
       if (req.method === 'POST' && pathname === '/api/logout') {
         const data=await body(req);
+        user(req);
         if(typeof data.endpoint==='string')delivery.unsubscribe(current.id,data.endpoint);
         const token = sessionHash(req);
         db.prepare('DELETE FROM sessions WHERE token=?').run(token);
@@ -532,16 +568,19 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         const symbol = new URL(req.url, 'http://localhost').searchParams.get('symbol') || 'EURUSD';
         if (!isMarket(symbol)) throw new RequestError(400, 'Select a supported market.');
         const state = await serialized(current.id, () => syncReferenceState(current.id, [symbol]));
+        user(req);
         respond(res, 200, { account: state }); return;
       }
       if (req.method === 'GET' && pathname === '/api/journal') {
         const state = await serialized(current.id, () => load(current.id));
+        user(req);
         respond(res,200,{notice:state.migrationRequired ? 'Historical demo assessment recorded before reference-price execution; archived fills use the earlier price model.' : 'Server-recorded demo trading at reference market prices; fills are simulated and do not represent live broker execution.',exportedAt:new Date(now()).toISOString(),account:state}); return;
       }
       if (req.method==='POST' && ['/api/limits','/api/trades/protection','/api/orders','/api/orders/cancel','/api/alerts','/api/alerts/remove','/api/notifications/read'].includes(pathname)) {
         limit(req,'trades',120,60000);
         const data=await body(req);
         const state=await serialized(current.id, async () => {
+          user(req);
           const before = load(current.id);
           if (pathname !== '/api/notifications/read') requireReferenceAccount(before);
           let requestedSymbols = [];
@@ -556,6 +595,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           // Cancelling and acknowledging notices remain possible during outages.
           const needsSync = ['/api/limits', '/api/trades/protection', '/api/orders', '/api/alerts'].includes(pathname);
           const account = needsSync ? await syncReferenceState(current.id, requestedSymbols) : load(current.id);
+          user(req);
           try {
             if(pathname==='/api/limits') setLimits(account,data,now());
             else if(pathname==='/api/trades/protection') {
@@ -582,6 +622,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         limit(req,'trades',120,60000);
         const data = await body(req);
         const result = await serialized(current.id, async () => {
+          user(req);
           let state = load(current.id);
           if (pathname === '/api/account/reset') {
             event(current.id,'reset-archive',state);
@@ -601,6 +642,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           // Persist market fills and risk liquidation first, even when the
           // requested order is subsequently rejected or its quote is unavailable.
           state = await syncReferenceState(current.id, [symbol]);
+          user(req);
           requireFresh(state, pathname === '/api/trades' ? [symbol, ...state.positions.map(p => p.symbol)] : [symbol]);
           try {
             if (pathname === '/api/trades') {
@@ -631,7 +673,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     for (const connections of [...streams.values()]) for (const connection of [...connections]) endStream(connection);
     marketData.close?.();
     delivery.close();
-    closePromise = Promise.allSettled([...queues.values(),support.close()]).then(() => db.close());
+    closePromise = Promise.allSettled([...queues.values(),support.close(),passwordRecovery.close(),passwords.close()]).then(() => db.close());
     return closePromise;
   } };
 }

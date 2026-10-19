@@ -25,7 +25,8 @@ http.createServer(async (req, res) => {
     const resolved = await realpath(filename);
     if (!resolved.startsWith(root + path.sep)) { res.writeHead(403); res.end('Forbidden'); return; }
     const body = await readFile(resolved);
-    res.writeHead(200, { 'Content-Type': types[path.extname(filename)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', ...(pathname==='/sw.js'?{'Cache-Control':'no-cache'}:{}) });
+    const recoveryPage = ['/forgot-password.html', '/reset-password.html'].includes(pathname);
+    res.writeHead(200, { 'Content-Type': types[path.extname(filename)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', ...(pathname==='/sw.js'?{'Cache-Control':'no-cache'}:{}), ...(recoveryPage ? { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" } : {}) });
     res.end(body);
   } catch { res.writeHead(404); res.end('Not found'); }
 }).listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Fundraiser Academy listening on port ' + (process.env.PORT || 3000)));
