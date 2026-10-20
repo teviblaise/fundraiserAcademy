@@ -62,3 +62,29 @@ for each security change or a different unused recovery code.
 Your private data folder includes two-factor-key.json. Keep the folder private
 and back it up with the database; the key must stay with existing encrypted
 authenticator records. This download never includes another installation's keys.
+
+STAFF AND ADMINISTRATION
+
+The admin dashboard is /admin.html. It includes trader and assessment review,
+certificates, agreement publication, sponsorship decisions, sponsored-account
+and payout records, support, reports, staff roles, audit history, and system status.
+
+Set ADMIN_OWNER_EMAILS in the application server's environment to the exact
+registered owner email. Register normally, confirm that email using the configured
+verified Resend sender, then enable an authenticator in Security. Admin access
+requires all these steps; setting the email alone never bypasses them. On Render,
+add the variable to that service's Environment settings separately and redeploy.
+A setting saved in the Codex cloud environment does not update Render.
+
+Sensitive changes and report exports require your password and a fresh second
+factor in the console. The confirmation lasts five minutes for the current session.
+Owners manage roles for registered, verified, 2FA-enabled staff. Trusted server
+operators can use npm run admin:staff -- list, grant, or revoke; see README.md for
+the full commands. These operations cannot bypass email confirmation or 2FA.
+
+Financial entries record verified external activity. Staff must enter the actual
+agreement's profit split and sharing policy. The website does not purchase prop
+accounts or send money. Your client dashboard shows your own review message and
+recorded accounts and payouts; internal notes remain private to authorized staff.
+Back up the database and private keys together on persistent storage. The free
+Render preview cannot preserve lasting account, agreement, or financial records.

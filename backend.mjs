@@ -14,6 +14,8 @@ import {createPasswordManager,nativeScrypt} from './passwords.mjs';
 import {createTwoFactor} from './two-factor.mjs';
 import {createSessions,sessionPolicy} from './sessions.mjs';
 import QRCode from 'qrcode';
+import {createAdminAccess} from './admin-access.mjs';
+import {createAdminConsole} from './admin.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
@@ -49,7 +51,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -79,12 +81,13 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const sessions = createSessions(db, { now });
   const twoFactor = createTwoFactor(db, databasePath, { now, ...twoFactorOptions });
   const delivery=createDelivery(db,databasePath,deliveryOptions);
+  const adminAccess=createAdminAccess(db,{now,...adminOptions});
   const profileView = row => publicUser(row, Boolean(db.prepare('SELECT verified FROM notification_preferences WHERE user_id=?').get(row.id)?.verified));
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
   const leaderboard=createLeaderboard(db,{now});
   const marketData=injectedMarketData ?? createMarketData();
-  const support=createSupport(db,{now,...supportOptions});
+  const support=createSupport(db,{now,staffAccess:id=>{const context=adminAccess.context(id);return context.eligible&&context.permissions.includes('support.manage');},...supportOptions});
   const queues = new Map();
   const timerPending = new Set();
   const securityPending = new Set();
@@ -128,11 +131,11 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if (!matches) throw new RequestError(403, 'Request origin is not allowed.');
     }
   }
-  async function body(req) {
+  async function body(req, maxBytes = 16384) {
     if (req.headers['x-requested-with'] !== 'FundraiserAcademy' || !req.headers['content-type']?.startsWith('application/json')) throw new RequestError(403, 'Use the website to submit this request.');
     requireOrigin(req);
     let content = '';
-    for await (const chunk of req) { content += chunk; if (Buffer.byteLength(content) > 16384) throw new RequestError(413, 'Request is too large.'); }
+    for await (const chunk of req) { content += chunk; if (Buffer.byteLength(content) > maxBytes) throw new RequestError(413, 'Request is too large.'); }
     if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
     try { const data = JSON.parse(content); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(); return data; }
     catch { throw new RequestError(400, 'Invalid JSON request.'); }
@@ -149,9 +152,14 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     if (!token) throw new RequestError(401, 'Please log in to continue.');
     const found = sessions.lookup(token);
     if (!found) throw new RequestError(401, 'Your session has expired. Please log in again.');
+    assertActive(found.user.id);
     return profileView(found.user);
   }
+  function assertActive(id) {
+    if(adminAccess.isSuspended(id)) throw new RequestError(403,'This account is suspended. Contact academy support for an account review.','ACCOUNT_SUSPENDED');
+  }
   function newSession(req, id, expectedVersion) {
+    assertActive(id);
     const token = randomBytes(32).toString('hex');
     sessions.create(id, hash(token), { userAgent: req.headers['user-agent'], expectedVersion });
     return token;
@@ -205,6 +213,29 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     if (notices[action]) delivery.queueSecurityNotice(id, notices[action]);
     return token;
   }
+  function revokeAccount(id) {
+    const removed=sessions.revokeAll(id);
+    sessions.bumpVersion(id);
+    twoFactor.invalidateAuthentication(id);
+    delivery.revokeDeviceNotifications(id);
+    return {count:removed.count};
+  }
+  const adminConsole=createAdminConsole(db,{access:adminAccess,sessions,twoFactor,contracts,leaderboard,delivery,support,
+    user,sessionHash,reauthenticate,body,respond,requireOrigin,limit,now,revokeAccount,closeRevokedStreams,isStopping:()=>stopping,
+    systemStatus(){
+      const mail=delivery.status(0);
+      const stream=marketData.streamStatus?.('BTCUSD');
+      return {generatedAt:now(),application:{mode:'single-server',database:'SQLite',nodeVersion:process.versions.node},
+        security:{adminTwoFactorRequired:true,privilegeMinutes:5,sessionDays:7,idleHours:24,ownerConfigured:Boolean(adminOptions?.ownerEmails||process.env.ADMIN_OWNER_EMAILS)},
+        integrations:[
+          {name:'Transactional email',configured:mail.emailAvailable,status:mail.emailAvailable?'configured':'not_configured',description:'Resend sender configuration; configured does not confirm inbox receipt.'},
+          {name:'Forex reference prices',configured:Boolean(process.env.TWELVE_DATA_API_KEY),status:process.env.TWELVE_DATA_API_KEY?'configured':'not_configured',description:'Twelve Data Basic periodic quotes. Provider availability is checked during execution.'},
+          {name:'Crypto reference prices',configured:true,status:stream?.connected?'stream_connected':'REST_fallback',description:'Public Coinbase prices; source freshness still controls simulated fills.'},
+          {name:'Generative support',configured:Boolean(process.env.SUPPORT_AI_API_KEY),status:process.env.SUPPORT_AI_API_KEY?'configured':'academy_guide',description:'Company guide remains available without AI credentials.'},
+          {name:'Sponsored-account and payment integrations',configured:false,status:'manual_records',description:'Account, statement, and payout records are entered by authorized staff. No external account issuance or money transfer is performed.'}],
+        storage:{durability:'Keep the private database directory on persistent operator-managed storage.',backups:'No automated backup service is configured. Back up the database and private authentication keys together.'},
+        outbox:{pending:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status IN ('pending','sending')").get().n,failed:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status='failed'").get().n}};
+    }});
   const revision = state => Number.isSafeInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   const load = id => {
     const state = ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));
@@ -305,7 +336,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     if (connection.closed || stopping) return false;
     if (connection.res.destroyed || connection.res.writableEnded) { removeStream(connection); return false; }
     const found = sessions.lookup(connection.token, { touch: false });
-    if (!found || found.user.id !== connection.userId) {
+    if (!found || found.user.id !== connection.userId || adminAccess.isSuspended(connection.userId)) {
       endStream(connection, 'auth-expired', { error: 'Your session has expired. Please log in again.' });
       return false;
     }
@@ -458,6 +489,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         let token;
         const completed = twoFactor.completeChallenge(data.challenge, data.code, {
           onComplete({ userId, method }) {
+            assertActive(userId);
             token = newSession(req, userId, sessions.version(userId));
             event(userId, 'login', { twoFactor: true, method });
           },
@@ -500,6 +532,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         // A reset can complete while scrypt is running. An old credential must
         // never create a fresh session after the reset revoked existing ones.
         if (!row || !matches || db.prepare('SELECT password FROM users WHERE id=?').get(row.id)?.password !== row.password) throw new RequestError(401,'Email or password is incorrect.');
+        assertActive(row.id);
         twoFactor.assertSnapshot(row.id, expected);
         if (expected.enabled) {
           const challenge = twoFactor.createChallenge(row.id, expected);
@@ -513,6 +546,8 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         session(req,res,row.id,expected.sessionVersion); respond(res,200,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(row.id))}); return;
       }
       const current = user(req);
+      if(pathname==='/api/admin'||pathname.startsWith('/api/admin/')){await adminConsole.handle(req,res,pathname,current);return;}
+      if(req.method==='GET'&&pathname==='/api/sponsorship'){respond(res,200,adminConsole.clientView(current.id));return;}
       if (pathname === '/api/security' || pathname.startsWith('/api/security/')) {
         requireOrigin(req);
         if (req.method === 'GET' && pathname === '/api/security') {

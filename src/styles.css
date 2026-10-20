@@ -4,6 +4,9 @@
 @source "../public/app.js";
 @source "../public/password-recovery.js";
 @source "../public/security.js";
+@source "../public/admin.js";
+@source "../public/admin-api.js";
+@source "../public/client-operations.js";
 @source "../public/client.js";
 @source "../public/client-summary.js";
 @source "../public/leaderboard.js";

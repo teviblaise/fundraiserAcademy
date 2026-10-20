@@ -54,7 +54,7 @@ export function manageSupportRole(db, action, email, now = Date.now()) {
   return { email: user.email, name: user.name, staff: action === 'grant' };
 }
 
-export function createSupport(db, { ai: injectedAI, aiOptions, staffEmails = process.env.SUPPORT_STAFF_EMAILS || '', now = Date.now, maxConcurrent = 4 } = {}) {
+export function createSupport(db, { ai: injectedAI, aiOptions, staffEmails = process.env.SUPPORT_STAFF_EMAILS || '', staffAccess = () => false, now = Date.now, maxConcurrent = 4 } = {}) {
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 20) throw new TypeError('Support provider concurrency must be between 1 and 20.');
   initializeSupportSchema(db);
   const ai = injectedAI ?? createSupportAI(aiOptions);
@@ -69,7 +69,7 @@ export function createSupport(db, { ai: injectedAI, aiOptions, staffEmails = pro
   const audit = (conversationId, actorId, action, detail = {}) => db.prepare('INSERT INTO support_audit(conversation_id,actor_user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(conversationId, actorId, action, JSON.stringify(detail), now());
   const role = id => {
     const account = db.prepare('SELECT users.email,notification_preferences.verified FROM users LEFT JOIN notification_preferences ON notification_preferences.user_id=users.id WHERE users.id=?').get(id);
-    return Boolean(account?.verified && (environmentStaff.has(account.email) || db.prepare('SELECT 1 FROM support_roles WHERE user_id=?').get(id)));
+    return Boolean(account?.verified && (staffAccess(id) || environmentStaff.has(account.email) || db.prepare('SELECT 1 FROM support_roles WHERE user_id=?').get(id)));
   };
   const capabilities = current => ({ aiAvailable: Boolean(ai.available), staff: role(current.id) });
   function staff(current) {

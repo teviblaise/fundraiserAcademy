@@ -58,6 +58,78 @@ log in at `login.html`. Each user has a separate practice account. Registration 
 
 ## Backend
 
+### Admin dashboard
+
+The staff console at `/admin.html` includes an overview, searchable traders and
+assessment records, certificates, company agreement publication, sponsorship
+reviews, sponsored-account records, profit statements, payout records, support,
+bounded CSV reports, staff permissions, audit history, and system configuration
+status. The client dashboard shows the trader's own review message and recorded
+sponsored accounts and payouts. Internal reviewer notes and evidence references
+are not included in the client view.
+
+Admin access is explicit: registration never creates an administrator. Set
+`ADMIN_OWNER_EMAILS` on the application server to the exact initial owner's
+registered email address, or provision an existing staff account using the
+trusted-server CLI below. Every admin-console account must have a confirmed
+email, enabled authenticator 2FA, and active account status. Configure the verified
+Resend sender before confirming a new owner's email, then enroll the authenticator
+from Security. A configured email alone does not activate admin access.
+
+Roles are `owner`, `admin`, `reviewer`, and `support`. Owners manage staff roles;
+admins manage academy operations and financial records; reviewers inspect trader,
+assessment, agreement, and certificate records and make review decisions; support
+staff use the support queue and a limited overview. Sensitive changes and CSV
+exports additionally require the signed-in staff member's password and a fresh
+authenticator or unused recovery code. The resulting privilege lasts five minutes,
+is tied to that session and current security/role state, and stores no raw proof.
+
+On the trusted application server, using its existing `DATABASE_PATH`:
+
+```sh
+npm run admin:staff -- list
+npm run admin:staff -- grant --email registered-owner@your-domain.example --role owner --reason "Initial owner provisioning."
+npm run admin:staff -- grant --email registered-reviewer@your-domain.example --role reviewer --reason "Assign assessment reviews."
+npm run admin:staff -- revoke --email registered-reviewer@your-domain.example --reason "Remove reviewer access."
+```
+
+Run the current server once before using the CLI so the database/security schema
+exists. Grants require registered, email-verified users with 2FA already enabled;
+the command cannot bypass these prerequisites. Role changes revoke existing
+sessions and pending authentication challenges. Owners listed in
+`ADMIN_OWNER_EMAILS` are managed through that environment setting and a server
+restart, not through web or CLI revocation. Self-removal, self-suspension, and
+removal of the last eligible owner are restricted. The older
+`SUPPORT_STAFF_EMAILS`/`support:staff` grants independently control the legacy
+support inbox; removing an admin role does not remove a separate support grant.
+
+Administrative writes require a reason and append an immutable audit record.
+Suspension revokes sessions and blocks new sign-ins, while preserving records and
+background protection of open simulated exposure. Restoring access requires a new
+sign-in. Review approval requires the current qualifying assessment certificate
+and signature on the exact active agreement. A changed agreement or certificate
+invalidates a stale review basis; a certificate or approval does not issue an
+external prop account.
+
+Sponsored accounts, statements, and payouts are **manual records of external
+activity**. Authorized staff must verify the external evidence, explicitly enter
+the account size, agreed trader share, and profit-sharing policy, and bind the
+record to a current approved review. Account terms and posted statements are
+immutable. `cumulative_high_water` allocates profit only above the prior cumulative
+profit high-water mark; losses must be recovered before new profit is shared.
+`settled_period` allocates positive, externally settled periods separately and
+requires confirmation plus nonoverlapping period dates. Neither policy charges a
+negative trader share. Choose the policy required by the actual signed agreement;
+the application does not select business terms for the company.
+
+Amounts are recorded in USD cents. Requested and approved payouts reserve the
+available recorded trader share; rejection releases it. Marking an approved payout
+paid requires an external payment reference. These controls prevent duplicate
+reservations but do not establish that evidence is genuine or a bank transfer
+occurred. The website does not purchase prop accounts, connect to a firm's funded
+account feed, or transfer money. See DEPLOYMENT.md for owner activation and
+persistent storage requirements.
+
 ### Required trader agreement
 
 After a server-confirmed assessment pass, the dashboard and certificates page
@@ -106,9 +178,10 @@ Configuration:
 - `COOKIE_SECURE=true`: secure cookies; enable with HTTPS for deployment.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
-single-server development backend, not a complete public-launch system. Funding
-reviewer tools, account deletion, retention
-policy, operational backups, and funding/payout integrations still need implementation.
+single-server development backend. Account deletion, a finalized retention
+policy, automated operational backups, and external prop-account/payment
+integrations still need implementation. Admin reviews and manual financial
+records are available; they do not replace those external integrations.
 Formal program terms and legal/privacy information must be finalized before launch.
 
 API endpoints: POST `/api/register`, `/api/login`, `/api/logout`, `/api/trades`,

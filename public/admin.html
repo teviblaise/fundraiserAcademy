@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0b0b0b"><meta name="description" content="Fundraiser Academy administration: traders, qualification, agreements, sponsorship, support, and audited operations.">
+  <title>Administration | Fundraiser Academy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/admin.js"></script>
+</head>
+<body class="min-h-screen">
+  <a href="#admin-content" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-lime focus:px-4 focus:py-2 focus:text-black">Skip to administration content</a>
+  <header class="sticky top-0 z-30 flex min-h-20 items-center justify-between gap-4 border-b border-line bg-paper px-4 py-4 sm:px-6 lg:ml-64 lg:px-8">
+    <div class="flex min-w-0 items-center gap-3"><button id="admin-menu" type="button" class="desk-action lg:hidden" aria-expanded="false" aria-controls="admin-sidebar">Menu ☰</button><div><p class="text-[10px] font-semibold uppercase tracking-[2px] text-lime">FUNDRAISER ACADEMY</p><p class="text-sm font-semibold">Administration</p></div></div>
+    <div class="flex shrink-0 flex-wrap items-center justify-end gap-2"><span id="admin-role" class="hidden rounded-full border border-line px-3 py-1 text-xs text-muted sm:block"></span><button id="admin-unlock" type="button" class="desk-action" hidden>Unlock actions</button><a href="/client.html" class="desk-action hidden sm:inline-block">Client dashboard</a><button id="admin-logout" type="button" class="desk-action">Log out</button></div>
+  </header>
+  <button id="admin-nav-overlay" type="button" class="fixed inset-0 z-40 bg-black/80 lg:hidden" aria-label="Close administration menu" hidden></button>
+  <aside id="admin-sidebar" class="fixed inset-y-0 left-0 z-50 hidden w-64 overflow-y-auto border-r border-line bg-[#111111] p-5 lg:block" aria-label="Administration sidebar">
+    <div class="mb-7 flex items-center justify-between gap-2"><a href="/client.html" aria-label="Fundraiser Academy client dashboard"><img src="/logo.svg" class="h-auto w-44" width="710" height="170" alt="Fundraiser Academy"></a><button id="admin-menu-close" class="desk-action lg:hidden" type="button" aria-label="Close menu">×</button></div>
+    <p class="mb-3 text-[10px] font-semibold uppercase tracking-[2px] text-muted">Academy operations</p>
+    <nav id="admin-navigation" class="static flex flex-col items-stretch gap-1 border-0 bg-transparent p-0 shadow-none" aria-label="Administration sections"></nav>
+    <div class="mt-8 border-t border-line pt-5"><a class="block py-2 text-xs text-muted" href="/security.html">Account security →</a><a class="block py-2 text-xs text-muted" href="/client.html">Client dashboard →</a><p class="mt-4 text-[10px] leading-relaxed text-muted">Access is role-based. Administrative changes are recorded in the audit trail.</p></div>
+  </aside>
+  <div class="lg:ml-64">
+    <section id="admin-loading" class="px-4 py-12 sm:px-6 lg:px-8" role="status" aria-live="polite"><p class="eyebrow text-lime">ACADEMY OPERATIONS</p><p id="admin-loading-message">Checking your administrative access…</p><button id="admin-retry" class="desk-action mt-4" type="button" hidden>Try again</button></section>
+    <section id="admin-denied" class="mx-4 my-10 max-w-2xl rounded-2xl border border-line bg-[#151515] p-6 sm:mx-6 sm:p-8 lg:mx-8" hidden><p class="eyebrow text-lime">PROTECTED WORKSPACE</p><h1 class="mb-4 text-3xl tracking-tight">Admin access required.</h1><p id="admin-denied-message" class="mb-6 text-sm text-muted"></p><div class="flex flex-wrap gap-3"><a class="button" href="/security.html">Open account security →</a><a class="desk-action" href="/client.html">Client dashboard</a></div><p class="mt-6 text-xs text-muted">Administrative roles are assigned by an authorized owner. Registration does not create administrator access.</p></section>
+    <main id="admin-main" class="min-w-0 px-4 pb-12 pt-7 sm:px-6 lg:px-8" hidden>
+      <div class="mb-6 flex flex-wrap items-start justify-between gap-4"><div><p id="admin-section-eyebrow" class="eyebrow mb-3 text-lime">YOUR OPERATIONAL PICTURE</p><h1 id="admin-section-title" class="mb-3 text-3xl tracking-tight sm:text-4xl">Overview</h1><p id="admin-section-description" class="max-w-3xl text-sm text-muted"></p></div><button id="admin-refresh" class="desk-action" type="button">Refresh</button></div>
+      <p id="admin-status" class="mb-5 text-sm" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+      <p id="admin-unlock-status" class="mb-5 rounded-lg border border-line bg-[#111111] px-4 py-3 text-xs text-muted" aria-live="polite">Viewing mode. Unlock actions with your password and a fresh second factor when you need to make a change.</p>
+      <div id="admin-content" class="min-w-0 space-y-6" tabindex="-1"></div>
+    </main>
+    <footer class="px-4 py-6 sm:px-6 lg:px-8"><div class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-[10px] text-muted"><span>© <span id="admin-year">2026</span> Fundraiser Academy</span><span>Private administrative workspace</span></div></footer>
+  </div>
+  <dialog id="admin-reauth-dialog" class="m-auto max-h-[90dvh] w-[min(480px,calc(100%-32px))] overflow-y-auto rounded-2xl border border-line bg-[#151515] p-6 text-white shadow-2xl backdrop:bg-black/80 sm:p-8" aria-labelledby="admin-reauth-title" aria-describedby="admin-reauth-description">
+    <h2 id="admin-reauth-title" class="mb-4 text-2xl tracking-tight">Confirm it’s you.</h2><p id="admin-reauth-description" class="mb-6 text-sm text-muted">Unlock administrative actions for five minutes using your password and an unused authenticator or recovery code.</p>
+    <form id="admin-reauth-form" method="post" action="/api/admin/reauth"><label for="admin-reauth-password">Current password</label><input id="admin-reauth-password" name="password" type="password" autocomplete="current-password" maxlength="256" spellcheck="false" required><label for="admin-reauth-code">Authenticator or unused recovery code</label><input id="admin-reauth-code" name="code" type="text" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" maxlength="80" required><p class="mb-5 text-xs text-muted">A code works once. If you just used an app code, wait for the next code in your authenticator.</p><p id="admin-reauth-status" class="mb-5 text-sm" role="status" aria-live="polite"></p><div class="flex flex-wrap gap-3"><button id="admin-reauth-submit" class="button" type="submit">Unlock actions</button><button id="admin-reauth-cancel" class="desk-action" type="button">Cancel</button></div></form>
+  </dialog>
+  <dialog id="admin-action-dialog" class="m-auto max-h-[90dvh] w-[min(720px,calc(100%-32px))] overflow-y-auto rounded-2xl border border-line bg-[#151515] p-6 text-white shadow-2xl backdrop:bg-black/80 sm:p-8" aria-labelledby="admin-action-title" aria-describedby="admin-action-description"><h2 id="admin-action-title" class="mb-4 text-2xl tracking-tight"></h2><p id="admin-action-description" class="mb-6 text-sm text-muted"></p><form id="admin-action-form" method="post"><div id="admin-action-fields"></div><p id="admin-action-status" class="mb-5 text-sm" role="status" aria-live="polite"></p><div class="flex flex-wrap gap-3"><button id="admin-action-submit" class="button" type="submit">Save change</button><button id="admin-action-cancel" class="desk-action" type="button">Cancel</button></div></form></dialog>
+  <noscript><p class="m-6 rounded-xl border border-line p-6 text-sm">Enable JavaScript to use the authenticated administration dashboard.</p></noscript>
+</body>
+</html>

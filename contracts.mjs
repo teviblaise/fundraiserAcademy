@@ -62,7 +62,8 @@ export function createContracts(db) {
     };
   }
 
-  function publish({content,format,version,title='Fundraiser Academy Trader Agreement',fileName,now=Date.now()}) {
+  function publish({content,format,version,title='Fundraiser Academy Trader Agreement',fileName,now=Date.now(),onPublish}) {
+    if (onPublish !== undefined && typeof onPublish !== 'function') throw new ContractError(400,'Provide a valid publication callback.');
     if (typeof version!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(version)) throw new ContractError(400,'Use a contract version with 1–80 letters, digits, dots, underscores, or hyphens.');
     if (typeof title!=='string' || !title.trim() || title.trim().length>160 || /\p{Cc}/u.test(title)) throw new ContractError(400,'Enter a contract title with 1–160 characters and no control characters.');
     if (!['pdf','text'].includes(format)) throw new ContractError(400,'Publish a PDF or UTF-8 .txt contract.');
@@ -86,13 +87,18 @@ export function createContracts(db) {
     const extension=format==='pdf'?'.pdf':'.txt';
     const safeName=(typeof fileName==='string'?path.basename(fileName):`fundraiser-academy-contract-${version}${extension}`).replace(/[^A-Za-z0-9._-]/g,'-').slice(0,180);
     const row={id,version,title:title.trim(),hash,format,file_name:safeName || `contract${extension}`,published_at:now};
-    db.exec('BEGIN IMMEDIATE');
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare('INSERT INTO contract_documents VALUES (?,?,?,?,?,?,?,?)').run(id,version,row.title,hash,format,row.file_name,content,now);
       db.prepare('INSERT INTO active_contract VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET contract_id=excluded.contract_id').run(id);
       db.prepare('INSERT INTO contract_publication_events(contract_id,created_at) VALUES (?,?)').run(id,now);
-      db.exec('COMMIT');
-    } catch(error) {db.exec('ROLLBACK');throw error;}
+      if (onPublish) {
+        const callbackResult = onPublish({...metadata(row),reused:false,active:true});
+        if (callbackResult && typeof callbackResult.then === 'function') throw new TypeError('Contract publication callbacks must be synchronous.');
+      }
+      if (ownsTransaction) db.exec('COMMIT');
+    } catch(error) {if (ownsTransaction) db.exec('ROLLBACK');throw error;}
     return {...metadata(row),reused:false,active:true};
   }
 

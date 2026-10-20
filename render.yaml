@@ -25,3 +25,7 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      # Exact initial owner email(s). Requires verified email and enrolled 2FA.
+      # This does not create an account or bypass either security prerequisite.
+      - key: ADMIN_OWNER_EMAILS
+        sync: false

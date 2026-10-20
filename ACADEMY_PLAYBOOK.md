@@ -56,7 +56,10 @@ Assess verified trading history, repeatable strategy, drawdown control, position
 sizing, consistency, and rule compliance. Define the observation period, minimum
 sample size, permissible instruments, risk per trade, daily and overall loss limits,
 prohibited practices, and review/appeal process before accepting applicants.
-No numerical thresholds have been selected in this draft.
+The implemented simulator uses a 10% realized-profit target, 10% static total
+drawdown from starting balance, 5% daily drawdown from UTC day-start equity,
+and fills on at least 3 distinct UTC trading days. Passing requires no open
+positions. These assessment rules do not set a sponsored firm's account rules.
 
 ## Trader agreement brief
 
@@ -75,12 +78,12 @@ Do not present this brief as a signed or legally reviewed contract.
 
 ## Launch decisions still needed
 
-- Qualification duration and objective pass/fail thresholds.
+- Final qualification rubric, prohibited practices, and review/appeal procedure.
 - Profit split and payout mechanics.
 - Partner firm(s), permitted sponsorship arrangements, account sizes, and markets.
 - Eligibility regions/age, available sponsorship budget, and cohort capacity.
 - Company contact details, legal identity, privacy policy, and final trader agreement.
-- Application backend, secure data storage, notification service, and domain/hosting.
+- Production storage/backups, verified email sender, domain, and hosted service configuration.
 
 ## Application and administration requirements
 
@@ -98,9 +101,15 @@ Profiles, hashed passwords, sessions, trading state, and audit events use SQLite
 Each user has a separate account. The challenge has a 10% realized-profit target,
 10% static total drawdown from starting balance, and 5% daily drawdown from
 UTC day-start equity. Passing requires no open positions and fills on at least 3 distinct UTC trading days. These practice outcomes
-do not approve funding. Notification email opt-in verification and secure password recovery are implemented; reviewer workflows,
-account deletion/retention, production operations, and payout integration remain
-unfinished. Paper trades fill at verified market-reference prices without an added spread. Stale or unavailable quotes pause execution; this still does not establish live account performance. Intraday forex requires Twelve Data configuration; daily ECB closes are display-only. Earlier price-model attempts are retained until an explicit reset.
+do not approve funding. Email confirmation, notification opt-in verification,
+password recovery, authenticator security, admin review workflows, and manual
+sponsored-account/payout records are implemented. Account deletion/retention,
+automated production backups, and external prop-account/payment integrations
+remain unfinished. Paper trades fill at verified market-reference prices without
+an added spread. Stale or unavailable quotes pause execution; this still does not
+establish live account performance. Intraday forex requires Twelve Data
+configuration; daily ECB closes are display-only. Earlier price-model attempts
+are retained until an explicit reset.
 
 Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. Until the document is supplied, the agreement remains pending. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
 
@@ -115,3 +124,55 @@ password confirmation and an unused factor when 2FA is enabled.
 
 Operators must retain the private authenticator encryption key with the SQLite
 database. The local QR generator does not contact third-party QR services.
+
+### Admin operating controls
+
+The admin console at `/admin.html` provides trader search and details, assessment
+and certificate inspection, agreement publication, sponsorship reviews, manual
+sponsored-account statements and payouts, support, reports, staff permissions,
+audit records, and system status. Initial owners are explicitly configured with
+`ADMIN_OWNER_EMAILS`; other roles are assigned by an owner or trusted-server CLI.
+Every admin-console user must have verified email, an enabled authenticator, and
+an active account. New-owner email confirmation requires the configured verified
+Resend sender. The environment setting does not create an account or bypass
+verification. Server/Render configuration must be applied separately from Codex.
+
+Owner, admin, reviewer, and support roles expose only their assigned permissions.
+Staff changes, reviews, financial entries, and exports require a recent password
+and fresh-factor confirmation tied to the current session for five minutes.
+Changes require reasons and append audit records. Role changes and suspension
+revoke sessions; suspension also blocks new sign-ins while retaining history and
+background protection of open simulated exposure. The website does not provide a
+support workflow to bypass email ownership or 2FA.
+
+Reviewers can keep internal notes and choose pending review, needs information,
+approved, or rejected, with a separate client-facing message. Approval requires
+a valid current assessment certificate and signature on the current published
+company agreement. Decisions are bound to those records and checked against
+concurrent revisions. New document versions or changed qualifying records
+require a fresh review; a passed challenge or signed agreement alone does not
+approve funding. Publish the actual company agreement, never substitute test
+terms or an assistant-written contract for it.
+
+External sponsored-account records require a current approved review. Enter
+verified firm/account evidence, account size, exact trader share, and the actual
+agreement's profit-sharing policy. Cumulative-high-water sharing allocates only
+new cumulative profit highs after losses are recovered. Settled-period sharing
+allocates positive externally settled periods independently and requires an
+explicit settlement confirmation with nonoverlapping period dates. Losses never
+create a negative trader share. Account terms and posted statements are immutable;
+do not use either policy until its treatment matches the signed agreement.
+
+Payout requests and approvals reserve available recorded trader earnings;
+rejection releases the reservation. An approved payout can be marked paid only
+with an external payment reference. Staff still need to verify and carry out the
+external transaction and reconcile evidence. No prop-firm purchase, live funded
+account feed, bank transfer, or independent evidence verification is supplied.
+Clients see only their own review message and financial records. Internal notes
+and evidence references remain restricted to authorized staff.
+
+Before using real records, configure persistent storage and protected SQLite-aware
+backups, retain authentication and push keys, review staff grants, and finalize
+privacy, retention, and deletion procedures. Free Render preview storage is
+temporary and unsuitable for lasting signatures or financial records. Immutable
+application audit tables do not replace an operator-controlled backup process.

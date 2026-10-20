@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Your Fundraiser Academy client dashboard: profile, assessment progress, certificates, and trader agreement.">
+  <meta name="description" content="Your Fundraiser Academy client dashboard: profile, assessment progress, certificates, agreement, sponsorship review, and payout records.">
   <meta name="theme-color" content="#0b0b0b"><title>Client dashboard | Fundraiser Academy</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script><script type="module" src="/client.js"></script>
+  <script src="/app.js" defer></script><script type="module" src="/client.js"></script><script src="/client-operations.js" defer></script>
 </head>
 <body>
   <header class="header wrap">
@@ -66,7 +66,25 @@
         <section class="desk-card" aria-labelledby="notifications-heading"><h2 id="notifications-heading" class="mb-5 text-2xl tracking-tight">Email &amp; notifications</h2><dl class="space-y-3 text-sm"><div><dt class="metric-label mb-1">Email verification</dt><dd id="email-verification">Checking status…</dd></div><div><dt class="metric-label mb-1">Email alerts</dt><dd id="email-alert-status">Checking status…</dd></div><div><dt class="metric-label mb-1">Background push</dt><dd id="push-alert-status">Checking status…</dd></div></dl><p id="notification-detail" class="mt-4 text-xs text-muted">Trade notifications and price alerts are managed on your practice desk.</p><a data-assessment-link class="desk-action mt-5 inline-block" href="/dashboard.html#enable-notifications">Manage notifications →</a></section>
       </div>
     </div>
+    <section id="sponsorship-operations" class="desk-card mt-6" aria-labelledby="sponsorship-heading" aria-busy="true">
+      <div class="mb-4 flex flex-wrap items-start justify-between gap-4"><div><p class="eyebrow mb-3">YOUR NEXT CHAPTER</p><h2 id="sponsorship-heading" class="mb-0 text-2xl tracking-tight">Sponsorship &amp; payouts</h2></div><button id="refresh-sponsorship" type="button" class="desk-action">Refresh sponsorship</button></div>
+      <p id="sponsorship-load-status" class="mb-5 text-xs text-muted" role="status" aria-live="polite">Loading your sponsorship information…</p>
+      <a id="sponsorship-login" class="desk-action mb-5 inline-block" href="/login.html" hidden>Log in to view your records</a>
+      <div id="sponsorship-content" hidden>
+        <article class="rounded-lg border border-line p-5" aria-labelledby="sponsorship-review-heading">
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 id="sponsorship-review-heading" class="text-lg">Company review</h3><span id="sponsorship-review-status" class="rounded-full border border-line px-3 py-1 text-xs"></span></div>
+          <p id="sponsorship-review-detail" class="text-sm text-muted"></p><p id="sponsorship-stale-note" class="mt-3 text-xs text-muted" hidden>A previous decision relates to an earlier assessment or agreement. Your current requirements are shown above.</p>
+          <div id="sponsorship-message-panel" class="mt-4 border-l-2 border-lime pl-4" hidden><p class="metric-label">A message from the academy</p><p id="sponsorship-client-message" class="whitespace-pre-wrap break-words text-sm"></p></div>
+          <p id="sponsorship-reviewed-at" class="mt-4 text-xs text-muted" hidden></p><a id="sponsorship-next-action" class="desk-action mt-4 inline-block" hidden></a>
+        </article>
+        <div class="mt-6 grid items-start gap-6 lg:grid-cols-2">
+          <section class="min-w-0" aria-labelledby="sponsored-accounts-heading"><h3 id="sponsored-accounts-heading" class="mb-3 text-lg">Sponsored account records</h3><p id="sponsored-accounts-summary" class="mb-4 text-xs text-muted"></p><div id="sponsored-accounts-list" class="space-y-4"></div></section>
+          <section class="min-w-0" aria-labelledby="sponsored-payouts-heading"><h3 id="sponsored-payouts-heading" class="mb-3 text-lg">Payout records</h3><p id="sponsored-payouts-summary" class="mb-4 text-xs text-muted"></p><div id="sponsored-payouts-list" class="space-y-4"></div></section>
+        </div>
+        <p class="mt-6 border-t border-line pt-5 text-xs text-muted">The academy records these account details, statements, and payout updates. Figures reflect recorded statements rather than a live connection to your prop firm. Payments are handled outside this website. Review approval alone does not mean an account has been arranged or money has been paid.</p>
+      </div>
+    </section>
   </main>
-  <footer class="wrap"><div class="footer-top"><a class="brand" href="/"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a><p>Your skill. Our backing.</p><div class="flex flex-wrap gap-5 text-xs"><a href="/contact.html">Get in touch</a><a href="/privacy.html">Privacy</a><a href="#">Back to top ↑</a></div></div><p class="risk">Fundraiser Academy sponsors approved third-party prop accounts. This is a simulated assessment with demo funds. Assessment completion, certificates, and agreement signing do not guarantee sponsorship or profits. Covered losses and profit sharing follow the company’s written agreement and the account provider’s rules.</p><div class="footer-bottom"><span>© <span id="year">2026</span> Fundraiser Academy</span><span>Your skill. Our backing.</span></div></footer>
+  <footer class="wrap"><div class="footer-top"><a class="brand" href="/"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a><p>Your skill. Our backing.</p><div class="flex flex-wrap gap-5 text-xs"><a href="/contact.html">Get in touch</a><a href="/privacy.html">Privacy</a><a href="/admin.html">Staff console</a><a href="#">Back to top ↑</a></div></div><p class="risk">Fundraiser Academy sponsors approved third-party prop accounts. This is a simulated assessment with demo funds. Assessment completion, certificates, and agreement signing do not guarantee sponsorship or profits. Covered losses and profit sharing follow the company’s written agreement and the account provider’s rules.</p><div class="footer-bottom"><span>© <span id="year">2026</span> Fundraiser Academy</span><span>Your skill. Our backing.</span></div></footer>
 </body>
 </html>

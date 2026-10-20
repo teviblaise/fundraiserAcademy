@@ -118,10 +118,65 @@ volume, ensure the data directory is writable by container UID 1000.
 - `COOKIE_SECURE=true`: session cookies must use HTTPS.
 - `DATABASE_PATH`: a file on persistent storage, not a temporary build directory.
 - `RESEND_API_KEY` and `EMAIL_FROM`: required for signup confirmation, password recovery/security notices, and opted-in alert emails.
+- `ADMIN_OWNER_EMAILS`: exact registered email address(es) for initial owner access; every owner must also confirm email and enable authenticator 2FA.
 
-Preserve both the SQLite database and `vapid.json` in its directory. Replacing the
+Preserve the SQLite database, `two-factor-key.json`, and `vapid.json` in its private
+directory, or retain the original directly injected authenticator encryption key.
+Replacing the
 VAPID key pair invalidates existing browser push subscriptions. Back up SQLite
 using a SQLite-aware process and restrict access to database and backup files.
+
+## Activate the admin dashboard
+
+The console is served at `/admin.html`. A deployment does not create or verify an
+owner account. To activate it:
+
+1. In the running Render service's **Environment** settings, set
+   `ADMIN_OWNER_EMAILS` to the exact email the owner will register and deploy the
+   updated configuration. For a new Blueprint, enter it when prompted. Existing
+   services must add it separately; a value saved in Codex cloud settings or a
+   Git change to `render.yaml` does not establish that the running service has it.
+2. Configure `RESEND_API_KEY` and a sender on a domain verified in Resend as
+   `EMAIL_FROM`. Register the owner normally and confirm the email link. Older
+   accounts also need actual email verification for admin access.
+3. Sign in, open Security, enable the authenticator, and save recovery codes
+   privately. Then open `/admin.html`. An active account, confirmed email, and
+   enrolled 2FA are all required, even for an environment-managed owner.
+4. Before editing records or exporting a report, confirm the password and a fresh
+   second-factor code in the console. This grants five minutes of privileged
+   access to that session; sign-out, security changes, or role changes invalidate
+   the proof. An already used authenticator code cannot be reused.
+
+Owners can assign `owner`, `admin`, `reviewer`, or `support` roles to other
+registered, verified, 2FA-enabled staff. A trusted server shell can also run
+`npm run admin:staff -- list`, or
+`npm run admin:staff -- grant --email registered-staff@your-domain.example --role reviewer --reason "Assign assessment reviews."`.
+Use `revoke --email ... --reason "..."` to remove a database-managed role. All CLI
+changes use the existing `DATABASE_PATH`, record an audit entry, and revoke that
+account's sessions. They do not verify email or disable 2FA. Environment-managed
+owners must be changed in `ADMIN_OWNER_EMAILS` and the server restarted.
+
+Admin-console support access requires the same verified-email and 2FA gates.
+`SUPPORT_STAFF_EMAILS` and `support:staff` remain independent legacy inbox grants;
+review both if removing all support access for a staff member. A free Render
+service may not provide shell access, so the owner environment setting is the
+hosted bootstrap path.
+
+Publish only the company-provided PDF or UTF-8 text agreement from the console or
+the existing `contract:publish` command. A new active version requires a new
+trader signature and a current review. Do not publish test terms on the real site.
+Record external sponsored accounts only after review approval and verification
+of the actual account evidence. Select the exact agreed profit split and either
+cumulative-high-water or externally settled-period sharing. Payout actions record
+and reserve ledger amounts; they do not contact a bank, issue a prop account, or
+prove that a payment took place.
+
+Keep the private database and keys on persistent storage before collecting lasting
+admin decisions, signatures, or financial records. The free preview remains
+ephemeral. Audit records, posted statements, and financial terms are append-only
+or immutable in the application; an operator still needs protected backups,
+retention procedures, and periodic staff-access reviews. No automated backup
+service is included.
 
 ## Verify after deployment
 
@@ -146,9 +201,11 @@ credentials, Git metadata, and installed dependencies. Deploying this archive
 starts with no users; migrating existing records requires a separate protected
 database/key backup and restore.
 
-Required signup confirmation, password recovery, and optional email verification for alerts are implemented. Reviewer
-administration, complete privacy/retention policies, and funding operations remain
-unfinished; review README.md and ACADEMY_PLAYBOOK.md before public enrollment.
+Required signup confirmation, password recovery, optional email verification for
+alerts, and the admin review console are implemented. Complete privacy/retention
+policies, automated backups, account deletion, and external funded-account/payment
+integrations remain unfinished. Manual admin financial records do not supply
+those integrations; review README.md and ACADEMY_PLAYBOOK.md before public enrollment.
 
 
 ## Customer support
