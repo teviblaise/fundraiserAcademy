@@ -6,3 +6,10 @@ data
 *.log
 exports
 brand
+
+# Private authentication keys and databases, including custom DATABASE_PATH.
+two-factor-key.json
+two-factor-key.json.*.tmp
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

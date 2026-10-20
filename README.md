@@ -350,6 +350,75 @@ even when a login was already in flight. Email outages never expose a recovery
 link through a browser, API, or logs; restore delivery rather than bypass ownership.
 
 
+### Two-factor authentication and sessions
+
+Open **Security** from the client dashboard, or visit `security.html`. Add Google
+Authenticator, Microsoft Authenticator, 1Password, or another standards-compatible
+TOTP app. Confirm ownership of your account email before enrollment, including
+older accounts that already have assessment access. Security offers a confirmation
+email button for unverified accounts. Setup then requires the current password,
+a locally generated QR or manual
+setup key, and a correct six-digit app code before protection is enabled.
+The setup expires after ten minutes. No external QR service receives the secret.
+
+Enabling 2FA shows ten random, single-use recovery codes once. Copy or download
+them and keep them in a password manager or another private location separate
+from the authenticator. Passwords, setup keys, and displayed codes are cleared
+when the Security page is hidden; codes are not stored in browser storage.
+After entering the password, sign-in requires a fresh authenticator code or an
+unused recovery code. Sign-in challenges expire after five minutes, cannot be
+replayed, and have persisted attempt limits. Only full authentication creates a
+normal session. Codes use a 30-second period with limited clock drift allowance.
+A code already used for login or a security change cannot be used again: wait
+for the next code in the app or use a different recovery code.
+
+Disabling 2FA, replacing recovery codes, or revoking sessions requires the current
+password and, when enabled, a fresh authenticator or unused recovery code. Factor
+changes invalidate earlier sign-ins and challenges, rotate the current cookie,
+and remove device push subscriptions. Replacement codes invalidate the entire
+previous set. Password recovery changes the password and signs out all devices
+but preserves 2FA and remaining recovery codes; email access alone cannot remove
+the second factor. To replace a lost app, use recovery codes to sign in, disable
+2FA with a fresh proof, then enroll the new app. Losing both app and codes requires
+a manual account review; no automated support or email bypass is implemented.
+
+The session list shows your current browser, approximate browser/device labels,
+last activity, creation time when recorded, and expiry. Labels are user-agent
+hints, not verified identities or locations. Public session IDs are independent
+random UUIDs; auth cookie values and hashes never appear in the list. You can
+sign out a selected device, every other device, or all devices. Sessions last
+at most seven days and expire after 24 hours without session activity. Passive
+SSE messages do not renew the idle deadline. Revocation ends the corresponding
+active account streams immediately and blocks requests already waiting on network
+or password work. Automatic trading risk checks continue after logout.
+Existing valid sessions migrate without inventing their original creation date.
+
+Authenticator secrets use AES-256-GCM encryption with user-bound authenticated
+data. The server creates a private `two-factor-key.json` beside `DATABASE_PATH`
+when first initialized. **Back up and restore the entire private data directory,
+including this key, with the SQLite database.** Keep it outside `public/`, Git,
+and release downloads. POSIX keys must have mode 600; on Windows protect the
+private folder using account-level file permissions. The optional
+`TWO_FACTOR_ENCRYPTION_KEY` accepts a stable base64-encoded 32-byte key provided
+directly to the server process. It is a local encryption secret, not a network
+API key or proxy placeholder. Do not change it after enrollment without a planned
+secret migration. Existing encrypted factors fail closed if their key is missing
+or wrong; unused recovery codes still work. A lost key is never silently replaced
+while encrypted factors remain.
+
+Authenticator sign-in itself does not use email or SMS. First-time enrollment
+requires an email already confirmed through the existing account email service.
+Security-change notices use the existing
+transactional Resend queue when configured, independently of trade-alert opt-in;
+no authenticator or recovery secrets are emailed.
+
+APIs: GET `/api/security`; POST `/api/security/2fa/setup`, `/confirm`, `/cancel`,
+`/disable`, `/recovery-codes` under that prefix; POST `/api/login/2fa` and
+`/api/login/2fa/cancel`; POST `/api/security/sessions/revoke`, `/revoke-others`,
+`/revoke-all`. Security APIs remain available to owners awaiting email confirmation
+and do not grant assessment access.
+
+
 ### Customer support and human handoff
 
 A Support button opens the customer conversation from site pages. Public visitors

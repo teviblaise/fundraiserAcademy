@@ -142,7 +142,7 @@
       resetForm.hidden = true;
       introduction.hidden = true;
       document.getElementById('reset-title').textContent = 'Password updated.';
-      status.textContent = 'Your password has been changed. All previous sessions have been signed out. Sign in with your new password to continue.';
+      status.textContent = 'Your password has been changed. All previous sessions have been signed out. Sign in with your new password to continue. If two-factor authentication is enabled, you will still need your authenticator app or an unused recovery code.';
       loginLink.textContent = 'Sign in with your new password →';
       loginLink.className = 'button mt-6';
       status.focus();

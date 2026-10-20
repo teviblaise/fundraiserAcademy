@@ -103,3 +103,15 @@ account deletion/retention, production operations, and payout integration remain
 unfinished. Paper trades fill at verified market-reference prices without an added spread. Stale or unavailable quotes pause execution; this still does not establish live account performance. Intraday forex requires Twelve Data configuration; daily ECB closes are display-only. Earlier price-model attempts are retained until an explicit reset.
 
 Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. Until the document is supplied, the agreement remains pending. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
+
+### Account security
+
+Clients can enable authenticator-app 2FA from Security and keep single-use
+recovery codes privately. Password recovery preserves the second factor. Never
+ask clients to send passwords, app setup keys, or recovery codes in support.
+Loss of both factors needs manual account review; no automated bypass exists.
+Clients can review and revoke their active sessions. Security changes require
+password confirmation and an unused factor when 2FA is enabled.
+
+Operators must retain the private authenticator encryption key with the SQLite
+database. The local QR generator does not contact third-party QR services.

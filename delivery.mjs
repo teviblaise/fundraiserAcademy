@@ -77,6 +77,27 @@ export function createDelivery(db, databasePath, options={}) {
     addJob(id,key,'password-changed',row.email,{title,text:`${introduction}\n\nSign in with your new password:\n${loginUrl}\n\n${footnote}`,html:accountEmail({title,introduction,action:'Go to sign in',url:loginUrl,footnote}),key});
     return {status:'queued'};
   }
+  function queueSecurityNotice(id, action) {
+    const messages = {
+      'two-factor-enabled': ['Two-factor authentication is enabled', 'Your Fundraiser Academy account now requires an authenticator code or an unused recovery code when you sign in.'],
+      'two-factor-disabled': ['Two-factor authentication was disabled', 'Two-factor authentication was removed from your Fundraiser Academy account.'],
+      'recovery-codes-regenerated': ['Your recovery codes were replaced', 'A new set of two-factor recovery codes was generated. Earlier recovery codes no longer work.'],
+      'sessions-revoked': ['Account sessions were signed out', 'Signed-in sessions were revoked from your Fundraiser Academy security settings.'],
+    };
+    if (!Object.hasOwn(messages, action)) throw new Error('Invalid security notification.');
+    if (!emailAvailable) return {status:'unavailable'};
+    // Pending registrations can revoke sessions, but cannot send security
+    // notices to a mailbox they have not proved they own.
+    if (!preferences(id).verified) return {status:'unverified'};
+    const row = db.prepare('SELECT email FROM users WHERE id=?').get(id);
+    if (!row) return {status:'unavailable'};
+    const [title, introduction] = messages[action];
+    const url = `${origin}/security.html`;
+    const footnote = 'If you did not make this change, secure your email and academy password, then contact academy support. Never send a password, authenticator setup key, or recovery code in a support message.';
+    const key = `security:${action}:${randomBytes(16).toString('hex')}`;
+    addJob(id,key,'security',row.email,{title,text:`${introduction}\n\nReview account security:\n${url}\n\n${footnote}`,html:accountEmail({title,introduction,action:'Review account security',url,footnote}),key});
+    return {status:'queued'};
+  }
   function revokeDeviceNotifications(id) {
     db.prepare('DELETE FROM push_subscriptions WHERE user_id=?').run(id);
     db.prepare("UPDATE notification_outbox SET status='cancelled',payload='{}' WHERE user_id=? AND channel='push' AND status IN ('pending','sending')").run(id);
@@ -201,5 +222,5 @@ export function createDelivery(db, databasePath, options={}) {
   }
   const timer=options.autoFlush===false?null:setInterval(()=>void flush().catch(()=>console.error('Notification queue processing failed.')),2000);
   timer?.unref();
-  return {enqueue,status,requestVerification,verify,queuePasswordReset,cancelPasswordResets,queuePasswordChanged,revokeDeviceNotifications,setEmail,subscribe,unsubscribe,flush,close(){stopped=true;if(timer)clearInterval(timer);}};
+  return {enqueue,status,requestVerification,verify,queuePasswordReset,cancelPasswordResets,queuePasswordChanged,queueSecurityNotice,revokeDeviceNotifications,setEmail,subscribe,unsubscribe,flush,close(){stopped=true;if(timer)clearInterval(timer);}};
 }

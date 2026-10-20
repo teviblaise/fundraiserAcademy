@@ -194,3 +194,30 @@ rejection, and sign-in with the new password. Reset links expire in 20 minutes.
 The request page always gives a generic response, so an accepted request alone
 is not proof of delivery. Security emails are transactional and do not need trade
 alert opt-in. No new secret or paid recovery service is required.
+
+## Authenticator security and persistent sessions
+
+Authenticator codes need no SMS or external 2FA provider. Account email ownership
+must be confirmed through the existing Resend flow before first enrollment,
+including older accounts. The Security page
+creates its QR code locally and supports authenticator apps plus recovery codes.
+Use HTTPS and secure cookies. Confirm setup, save codes privately, verify a fresh
+login requires the second factor, then test device sign-out using browsers you
+control. No passwords, setup seeds, QR images, or recovery codes belong in logs.
+
+The encryption key defaults to `two-factor-key.json` in the private database
+directory. Persist and back up the database and this key together. A Render disk
+mounted at the database directory preserves both; ephemeral free-preview storage
+is unsuitable for lasting real account records. An optional stable
+`TWO_FACTOR_ENCRYPTION_KEY` is a directly injected 32-byte base64 server secret.
+Do not create a proxy-only API-key binding for local encryption, do not generate
+a new value at every deploy, and do not change the key after factors are enrolled.
+Restore the original key with existing encrypted records. Recovery codes remain
+usable if a key is lost, while authenticator verification fails closed. The laptop
+ZIP creates its own independent key and never includes cloud accounts or keys.
+
+Session metadata migrates additively. Current valid sessions retain access unless
+a factor change, password reset, or owner revocation removes them. Sessions have a
+seven-day absolute lifetime and a 24-hour idle deadline. Revocation also invalidates
+pending sign-in challenges and in-flight login proofs; signing out devices does
+not delete trading history or disable background protective account checks.

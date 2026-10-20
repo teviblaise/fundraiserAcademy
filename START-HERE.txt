@@ -51,3 +51,14 @@ Forgot your password? Use Forgot password on the login page. The latest email
 link works once and expires in 20 minutes. A reset signs out all devices and
 keeps your assessment history. Delivery uses the same verified Resend sender
 and public HTTPS origin as signup confirmation; no links appear in the API.
+
+Open Security from the client dashboard to set up an authenticator app and manage
+signed-in devices. Confirm your email before enrolling an authenticator; the
+Security page offers a confirmation email button. Save the ten one-time recovery
+codes before leaving the page.
+Password recovery keeps two-factor authentication enabled. Use a fresh app code
+for each security change or a different unused recovery code.
+
+Your private data folder includes two-factor-key.json. Keep the folder private
+and back it up with the database; the key must stay with existing encrypted
+authenticator records. This download never includes another installation's keys.

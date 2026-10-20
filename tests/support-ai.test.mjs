@@ -95,6 +95,19 @@ test('password recovery help takes precedence over email verification and challe
   support.close();
 });
 
+test('security guidance requires email ownership and never promises a second-factor bypass', async () => {
+  const support = createSupportAI({ apiKey: '' });
+  const security = await support.reply({ messages: message('I lost my authenticator and recovery codes, can I reset my password?') });
+  assert.match(security.text, /\/security\.html/);
+  assert.match(security.text, /Confirm your account email/);
+  assert.match(security.text, /password recovery keeps 2FA enabled/i);
+  assert.match(security.text, /cannot bypass 2FA/);
+  assert.doesNotMatch(security.text, /send a password reset link/);
+  const sessions = await support.reply({ messages: message('Where can I review active sessions?') });
+  assert.match(sessions.text, /review or revoke your active sessions/);
+  support.close();
+});
+
 test('provider receives bounded conversation and private fixed grounding through the Responses API', async () => {
   let seen;
   const support = createSupportAI({ apiKey: 'private-support-key', fetchFn: async (url, options) => { seen = { url, options, body: JSON.parse(options.body) }; return response('The minimum is three separate UTC trading days.'); } });

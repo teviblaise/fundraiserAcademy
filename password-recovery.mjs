@@ -15,7 +15,7 @@ function invalidLink() {
 
 // Only digests persist in the credential tables. A raw link exists exclusively
 // in the private email outbox until its send, cancellation, or final failure.
-export function createPasswordRecovery(db, { delivery, now = Date.now, isAvailable = () => true, onReset = () => {}, hashPassword } = {}) {
+export function createPasswordRecovery(db, { delivery, now = Date.now, isAvailable = () => true, onCommitReset = () => {}, onReset = () => {}, hashPassword } = {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS password_resets (
     token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
     expires INTEGER NOT NULL, created_at INTEGER NOT NULL);
@@ -84,6 +84,8 @@ export function createPasswordRecovery(db, { delivery, now = Date.now, isAvailab
       db.prepare('UPDATE users SET password=? WHERE id=?').run(encoded, current.user_id);
       db.prepare('DELETE FROM password_resets WHERE user_id=?').run(current.user_id);
       db.prepare('DELETE FROM sessions WHERE user_id=?').run(current.user_id);
+      const committed = onCommitReset(current.user_id);
+      if (committed && typeof committed.then === 'function') throw new TypeError('Password reset transaction callbacks must be synchronous.');
       delivery.cancelPasswordResets(current.user_id);
       delivery.revokeDeviceNotifications(current.user_id);
       delivery.queuePasswordChanged(current.user_id);

@@ -11,6 +11,9 @@ import {createSupport} from './support.mjs';
 import {createLeaderboard} from './leaderboard.mjs';
 import {createPasswordRecovery,passwordResetRequestMessage,passwordResetSuccessMessage} from './password-recovery.mjs';
 import {createPasswordManager,nativeScrypt} from './passwords.mjs';
+import {createTwoFactor} from './two-factor.mjs';
+import {createSessions,sessionPolicy} from './sessions.mjs';
+import QRCode from 'qrcode';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
@@ -46,7 +49,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, passwordScrypt = nativeScrypt, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -73,7 +76,8 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
-  db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());
+  const sessions = createSessions(db, { now });
+  const twoFactor = createTwoFactor(db, databasePath, { now, ...twoFactorOptions });
   const delivery=createDelivery(db,databasePath,deliveryOptions);
   const profileView = row => publicUser(row, Boolean(db.prepare('SELECT verified FROM notification_preferences WHERE user_id=?').get(row.id)?.verified));
   const certificates=createCertificates(db);
@@ -83,6 +87,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const support=createSupport(db,{now,...supportOptions});
   const queues = new Map();
   const timerPending = new Set();
+  const securityPending = new Set();
   const streams = new Map();
   const streamPending = new Set();
   const streamEpoch = randomUUID();
@@ -94,6 +99,10 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const passwordRecovery = createPasswordRecovery(db, {
     delivery, now, isAvailable: () => !stopping,
     hashPassword: passwords.encode,
+    onCommitReset(id) {
+      sessions.bumpVersion(id);
+      twoFactor.invalidateAuthentication(id);
+    },
     onReset(id) {
       for (const connection of [...(streams.get(id) ?? [])]) endStream(connection, 'auth-expired', { error: 'Your password was changed. Please log in again.' });
     },
@@ -138,11 +147,64 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   function user(req) {
     const token = sessionHash(req);
     if (!token) throw new RequestError(401, 'Please log in to continue.');
-    const row = db.prepare('SELECT users.id, users.email, users.name, users.first_name, users.other_names, users.market, users.created_at, users.email_confirmation_required FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(token, Date.now());
-    if (!row) throw new RequestError(401, 'Your session has expired. Please log in again.');
-    return profileView(row);
+    const found = sessions.lookup(token);
+    if (!found) throw new RequestError(401, 'Your session has expired. Please log in again.');
+    return profileView(found.user);
   }
-  function session(res, id) { const token = randomBytes(32).toString('hex'); db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token), id, Date.now() + sessionLifetime); cookie(res, token); }
+  function newSession(req, id, expectedVersion) {
+    const token = randomBytes(32).toString('hex');
+    sessions.create(id, hash(token), { userAgent: req.headers['user-agent'], expectedVersion });
+    return token;
+  }
+  function session(req, res, id, expectedVersion) { cookie(res, newSession(req, id, expectedVersion)); }
+  function revokePresentedSession(req) {
+    const old = sessions.lookup(sessionHash(req), { touch: false });
+    if (!old) return;
+    sessions.revoke(old.user.id, old.session.id);
+    closeRevokedStreams(old.user.id);
+  }
+  function securityView(id, currentHash) {
+    const enrollmentAllowed = Boolean(db.prepare('SELECT verified FROM notification_preferences WHERE user_id=?').get(id)?.verified);
+    return { twoFactor: { ...twoFactor.status(id), enrollmentAllowed }, sessions: sessions.list(id, currentHash), sessionsTotal: sessions.count(id), ...sessionPolicy };
+  }
+  function requireVerifiedEnrollment(req, id) {
+    const current = user(req);
+    if (current.id !== id) throw new RequestError(401, 'Please log in again.');
+    // A password chosen by someone who pre-registers another person's address
+    // must never let that person bind their authenticator to the mailbox owner.
+    // Grandfathered assessment access is independent of this ownership check.
+    if (!current.emailVerified) throw new RequestError(403, 'Confirm your email before enabling two-factor authentication. Open your client dashboard to verify your address.', 'EMAIL_CONFIRMATION_REQUIRED');
+  }
+  function closeRevokedStreams(id, message = 'Your session was signed out. Please log in again.') {
+    for (const connection of [...(streams.get(id) ?? [])]) {
+      if (!sessions.lookup(connection.token, { touch: false })) endStream(connection, 'auth-expired', { error: message });
+    }
+  }
+  async function reauthenticate(req, id, password) {
+    // Capture every credential generation before the asynchronous password KDF.
+    // A reset, enrollment, or sign-out that wins that race invalidates this proof.
+    const expected = twoFactor.snapshot(id);
+    const matches = await passwords.verify(typeof password === 'string' && [...password].length <= 128 ? password : '', expected.password);
+    if (stopping) throw new RequestError(503, 'The server is restarting. Please try again shortly.');
+    if (user(req).id !== id) throw new RequestError(401, 'Please log in again.');
+    twoFactor.assertSnapshot(id, expected);
+    if (!matches) throw new RequestError(401, 'Your current password is incorrect.', 'PASSWORD_REAUTHENTICATION_FAILED');
+    return expected;
+  }
+  function rotateSecuritySession(req, id, action) {
+    // Called synchronously inside the factor transaction, so credential changes
+    // and session revocation either all commit or all roll back together.
+    user(req);
+    sessions.revokeAll(id);
+    const version = sessions.bumpVersion(id);
+    twoFactor.invalidateAuthentication(id);
+    delivery.revokeDeviceNotifications(id);
+    const token = newSession(req, id, version);
+    event(id, 'security-change', { action, sessionsRevoked: true, deviceNotificationsRevoked: true });
+    const notices = { enabled: 'two-factor-enabled', disabled: 'two-factor-disabled', 'recovery-regenerated': 'recovery-codes-regenerated' };
+    if (notices[action]) delivery.queueSecurityNotice(id, notices[action]);
+    return token;
+  }
   const revision = state => Number.isSafeInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   const load = id => {
     const state = ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));
@@ -242,8 +304,8 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   function validStream(connection) {
     if (connection.closed || stopping) return false;
     if (connection.res.destroyed || connection.res.writableEnded) { removeStream(connection); return false; }
-    const session = db.prepare('SELECT 1 FROM sessions WHERE token=? AND user_id=? AND expires>?').get(connection.token, connection.userId, Date.now());
-    if (!session) {
+    const found = sessions.lookup(connection.token, { touch: false });
+    if (!found || found.user.id !== connection.userId) {
       endStream(connection, 'auth-expired', { error: 'Your session has expired. Please log in again.' });
       return false;
     }
@@ -383,6 +445,26 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         cookie(res, '', 0);
         respond(res, 200, { message: passwordResetSuccessMessage }); return;
       }
+      if (req.method === 'POST' && pathname === '/api/login/2fa/cancel') {
+        limit(req, 'auth-factor-cancel', 60, 600000);
+        const data = await body(req);
+        twoFactor.cancelChallenge(data.challenge);
+        respond(res, 200, { cancelled: true }); return;
+      }
+      if (req.method === 'POST' && pathname === '/api/login/2fa') {
+        limit(req, 'auth-factor', 100, 600000);
+        const data = await body(req);
+        if (typeof data.challenge === 'string' && /^[a-f0-9]{64}$/.test(data.challenge)) limitKey(`auth-factor:${hash(data.challenge)}`, 10, 600000);
+        let token;
+        const completed = twoFactor.completeChallenge(data.challenge, data.code, {
+          onComplete({ userId, method }) {
+            token = newSession(req, userId, sessions.version(userId));
+            event(userId, 'login', { twoFactor: true, method });
+          },
+        });
+        cookie(res, token);
+        respond(res, 200, { user: profileView(db.prepare('SELECT * FROM users WHERE id=?').get(completed.userId)) }); return;
+      }
       if (req.method === 'POST' && ['/api/register','/api/login'].includes(pathname)) {
         limit(req,'auth',20,600000);
         const data = await body(req);
@@ -409,17 +491,105 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
             const queued = await delivery.requestVerification(id, { purpose: 'account' });
             Object.assign(confirmation, queued, { queued: true, status: 'queued' });
           } catch (error) { confirmation.error = error.message; }
-          session(res,id); respond(res,201,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(id)),confirmation}); return;
+          session(req,res,id); respond(res,201,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(id)),confirmation}); return;
         }
         const row = db.prepare('SELECT * FROM users WHERE email=?').get(email);
+        const expected = row ? twoFactor.snapshot(row.id) : null;
         const matches = await passwords.verify(password, row?.password);
         if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
         // A reset can complete while scrypt is running. An old credential must
         // never create a fresh session after the reset revoked existing ones.
         if (!row || !matches || db.prepare('SELECT password FROM users WHERE id=?').get(row.id)?.password !== row.password) throw new RequestError(401,'Email or password is incorrect.');
-        session(res,row.id); respond(res,200,{user:profileView(row)}); return;
+        twoFactor.assertSnapshot(row.id, expected);
+        if (expected.enabled) {
+          const challenge = twoFactor.createChallenge(row.id, expected);
+          // Starting another sign-in must not leave an earlier account's full
+          // authentication cookie available behind the factor challenge UI.
+          revokePresentedSession(req);
+          cookie(res, '', 0);
+          respond(res, 202, { twoFactorRequired: true, ...challenge }); return;
+        }
+        revokePresentedSession(req);
+        session(req,res,row.id,expected.sessionVersion); respond(res,200,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(row.id))}); return;
       }
       const current = user(req);
+      if (pathname === '/api/security' || pathname.startsWith('/api/security/')) {
+        requireOrigin(req);
+        if (req.method === 'GET' && pathname === '/api/security') {
+          limit(req, `security-read:${current.id}`, 120, 60000);
+          respond(res, 200, securityView(current.id, sessionHash(req))); return;
+        }
+        const factorActions = ['/api/security/2fa/setup', '/api/security/2fa/confirm', '/api/security/2fa/cancel', '/api/security/2fa/disable', '/api/security/2fa/recovery-codes'];
+        const sessionActions = ['/api/security/sessions/revoke', '/api/security/sessions/revoke-others', '/api/security/sessions/revoke-all'];
+        if (req.method !== 'POST' || ![...factorActions, ...sessionActions].includes(pathname)) throw new RequestError(404, 'Security endpoint not found.');
+        limit(req, `security-write:${current.id}`, 30, 600000);
+        const data = await body(req);
+        const enrollmentAction = ['/api/security/2fa/setup', '/api/security/2fa/confirm'].includes(pathname);
+        if (enrollmentAction) requireVerifiedEnrollment(req, current.id);
+        const expected = await reauthenticate(req, current.id, data.password);
+        if (enrollmentAction) requireVerifiedEnrollment(req, current.id);
+        if (pathname === '/api/security/2fa/setup') {
+          const enrollment = twoFactor.beginEnrollment(current.id, expected);
+          const qrTask = Promise.resolve(qrEncoder(enrollment.otpauthUri, { errorCorrectionLevel: 'M', margin: 2, width: 320 }));
+          securityPending.add(qrTask);
+          let qrDataUrl;
+          try { qrDataUrl = await qrTask; } finally { securityPending.delete(qrTask); }
+          if (stopping) throw new RequestError(503, 'The server is restarting. Please try again shortly.');
+          requireVerifiedEnrollment(req, current.id);
+          twoFactor.assertSnapshot(current.id, expected);
+          if (!twoFactor.enrollmentCurrent(current.id, enrollment.secret)) throw new RequestError(409, 'Two-factor setup changed. Start setup again.', 'SECURITY_STATE_CHANGED');
+          respond(res, 200, { ...enrollment, qrDataUrl }); return;
+        }
+        if (pathname === '/api/security/2fa/cancel') {
+          const result = twoFactor.cancelEnrollment(current.id, expected);
+          respond(res, 200, { ...result, security: securityView(current.id, sessionHash(req)) }); return;
+        }
+        if (factorActions.includes(pathname)) {
+          let token;
+          const change = { onChange({ action }) {
+            if (action === 'enabled') requireVerifiedEnrollment(req, current.id);
+            token = rotateSecuritySession(req, current.id, action);
+          } };
+          let result;
+          if (pathname === '/api/security/2fa/confirm') result = twoFactor.confirmEnrollment(current.id, expected, data.code, change);
+          else if (pathname === '/api/security/2fa/disable') result = twoFactor.disable(current.id, expected, data.code, change);
+          else result = twoFactor.regenerateRecoveryCodes(current.id, expected, data.code, change);
+          cookie(res, token);
+          closeRevokedStreams(current.id, 'Your account security changed. Please log in again.');
+          const message = pathname === '/api/security/2fa/confirm' ? 'Two-factor authentication is enabled. Save your recovery codes now. Other sessions have been signed out.'
+            : pathname === '/api/security/2fa/disable' ? 'Two-factor authentication is disabled. Other sessions have been signed out.'
+              : 'New recovery codes are ready. Earlier recovery codes no longer work. Other sessions have been signed out.';
+          respond(res, 200, { ...result, message, security: securityView(current.id, hash(token)) }); return;
+        }
+        let token, signedOut = false;
+        const beforeHash = sessionHash(req);
+        twoFactor.authorize(current.id, expected, data.code, {
+          onAuthorized() {
+            user(req);
+            if (pathname === '/api/security/sessions/revoke') {
+              const found = db.prepare('SELECT token FROM sessions WHERE user_id=? AND public_id=?').get(current.id, typeof data.sessionId === 'string' ? data.sessionId : '');
+              if (!found) throw new RequestError(404, 'Session not found.');
+              const removed = sessions.revoke(current.id, data.sessionId);
+              if (!removed.revoked) throw new RequestError(404, 'Session not found.');
+              signedOut = found.token === beforeHash;
+              sessions.bumpVersion(current.id);
+              twoFactor.invalidateAuthentication(current.id);
+            } else if (pathname === '/api/security/sessions/revoke-all') {
+              sessions.revokeAll(current.id);
+              sessions.bumpVersion(current.id);
+              twoFactor.invalidateAuthentication(current.id);
+              signedOut = true;
+            } else token = rotateSecuritySession(req, current.id, 'other-sessions-revoked');
+            delivery.revokeDeviceNotifications(current.id);
+            event(current.id, 'sessions-revoked', { action: pathname.split('/').at(-1), signedOut });
+            delivery.queueSecurityNotice(current.id, 'sessions-revoked');
+          },
+        });
+        if (signedOut) cookie(res, '', 0);
+        else if (token) cookie(res, token);
+        closeRevokedStreams(current.id);
+        respond(res, 200, { message: signedOut ? 'You have been signed out. Sign in again to continue.' : 'Selected sessions have been signed out.', signedOut, security: signedOut ? null : securityView(current.id, token ? hash(token) : beforeHash) }); return;
+      }
       if (pathname === '/api/leaderboard/preferences') {
         requireOrigin(req);
         if (req.method === 'GET') {
@@ -661,7 +831,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     } catch (error) {
       if (!error.status) console.error('API request failed:',error.message);
       if (res.headersSent) { res.destroy(); return; }
-      respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.',...((error instanceof RequestError && error.code) ? {code:error.code} : {})});
+      respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.',...((error.status && error.code) ? {code:error.code} : {})});
     }
   }
   return { handle, close() {
@@ -673,7 +843,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     for (const connections of [...streams.values()]) for (const connection of [...connections]) endStream(connection);
     marketData.close?.();
     delivery.close();
-    closePromise = Promise.allSettled([...queues.values(),support.close(),passwordRecovery.close(),passwords.close()]).then(() => db.close());
+    closePromise = Promise.allSettled([...queues.values(),...securityPending,support.close(),passwordRecovery.close(),passwords.close()]).then(() => db.close());
     return closePromise;
   } };
 }
