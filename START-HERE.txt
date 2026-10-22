@@ -134,7 +134,21 @@ the site does not invent older equity. Read history/currency/fee coverage notes.
 MetaTrader closing fills may include partial closes, so their win rate is not a
 round-trip-position win rate. Consistency statistics add no new challenge rules.
 
-BACKUPS AND RECOVERY CHECKS
+OPERATIONAL HEALTH, BACKUPS AND RECOVERY CHECKS
+
+Open Admin > Operations & recovery to check current database/storage health,
+backup freshness, delivery failures, email/forex setup, stale active MetaApi feeds,
+and safe runtime/storage metrics. Refresh the view or download its sanitized
+aggregate report. The report excludes customer records, provider account IDs,
+filesystem paths, and secret values.
+
+Run diagnostics requires your current staff authentication and an audit reason.
+It runs SQLite quick_check/foreign-key checks in a bounded read-only subprocess and tests
+private storage using a temporary file that is removed. Recorded results do not
+repair records, send email, contact providers, or replace the live database.
+Configured email still needs a real inbox test; free disk space does not prove
+persistent or offsite storage. See the operational runbook in DEPLOYMENT.md for
+flagged checks and never put passwords or API keys into a reason or chat.
 
 The running server schedules encrypted local SQLite backups, initially after about
 30 seconds, then by default every 24 hours with seven artifacts retained by count.
@@ -147,6 +161,11 @@ separate operator-managed offsite process before relying on real records. Losing
 an ephemeral Render instance can lose its database, backup files, and keys together.
 
 Trusted operators can run npm run operations -- status, backup, or verify.
+Use npm run operations -- health for aggregate readiness, or npm run operations
+-- diagnose for recorded local database/storage diagnostics. Health exits 0 for
+healthy and 2 for attention/critical. Diagnostics exits 0 for ok and 2 for
+warning/critical. Command failures exit 1. The CLI does not start background
+schedulers; inspect the running server's workers from Admin.
 The restore command writes only to a NEW directory and requires the healthy
 current database and latest deletion ledger. It never replaces the running
 database and is not complete recovery after losing the database or host. Restored

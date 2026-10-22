@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import {createHash,randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {createBackend} from '../backend.mjs';
@@ -22,7 +22,7 @@ async function fixture(options={}){
  const folder=await mkdtemp(path.join(tmpdir(),'fa-platform-http-')),database=path.join(folder,'academy.sqlite');
  let time=Date.now();const references=options.marketData??createReferenceFixture({now:()=>time});
  const provider=options.provider??{async fetch(_id,query){return{accountInformation:{currency:'EUR',balance:11097,equity:11110},deals:[{id:'closing-fill',type:'DEAL_TYPE_BUY',entryType:'DEAL_ENTRY_OUT',profit:100,commission:-2,swap:-1,fee:0,time:query.to-1000},{id:'capital-deposit',type:'DEAL_TYPE_BALANCE',profit:1000,time:query.to-500}],complete:true,nextOffset:query.offset+2};},async close(){}};
- const backend=createBackend(database,{now:()=>time,autoTick:false,adminOptions:{ownerEmails:'owner@example.com'},marketData:references,deliveryOptions:{...testDeliveryOptions,now:()=>time},supportOptions:{staffEmails:'',aiOptions:{apiKey:''}},platformOptions:{sponsored:{provider,syncTimeoutMs:10000},operations:{autoStart:false,backupDirectory:path.join(folder,'backups')}}});
+ const backend=createBackend(database,{now:()=>time,autoTick:false,adminOptions:{ownerEmails:'owner@example.com'},marketData:references,deliveryOptions:{...testDeliveryOptions,now:()=>time},supportOptions:{staffEmails:'',aiOptions:{apiKey:''}},platformOptions:{sponsored:{provider,syncTimeoutMs:10000},operations:{autoStart:false,backupDirectory:path.join(folder,'backups')},health:options.health}});
  const server=http.createServer((req,res)=>backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
  const app={folder,database,origin,backend,references,time:()=>time,advance(ms){time+=ms;},
@@ -140,6 +140,57 @@ test('operational backup/recovery routes require owner authorization, verify iso
   const verified=await app.request('/api/admin/operations/check',{backupId:backup.body.backupId,reason},owner.cookie);assert.equal(verified.status,200,JSON.stringify(verified.body));assert.equal(verified.body.integrity,'ok');assert.equal(verified.body.productionModified,false);assert.equal((await app.request('/api/me',undefined,owner.cookie)).status,200);assert.equal((await app.request('/api/me',undefined,trader.cookie)).status,200);
   const status=await app.request('/api/admin/operations',undefined,owner.cookie);assert.equal(status.body.backups.length,1);assert.equal(status.body.offsiteConfigured,false);assert.equal(status.body.persistentStorageRequired,true);assert.doesNotMatch(JSON.stringify(status.body),new RegExp(password+'|'+owner.secret));
  }finally{await app.close();}
+});
+
+test('operational health and diagnostics stay staff-only, require fresh authorization, and record safe diagnostic results',async()=>{
+ const app=await fixture();try{
+  const endpoint='/api/admin/operations/diagnose';
+  assert.equal((await app.request(endpoint,{reason})).status,401);
+  const owner=await app.register('owner@example.com',{factor:true}),trader=await app.register('trader@example.com');
+  assert.equal((await app.request(endpoint,{reason},trader.cookie)).status,403);
+  assert.equal((await app.request(endpoint,{reason},owner.cookie)).body.code,'ADMIN_REAUTH_REQUIRED');
+  assert.equal((await app.request(endpoint,undefined,owner.cookie)).status,405);
+  const before=await app.request('/api/admin/operations',undefined,owner.cookie);
+  assert.equal(before.status,200);assert.equal(before.headers.get('cache-control'),'no-store');
+  assert.ok(['healthy','attention','critical'].includes(before.body.health.overall));
+  assert.ok(Array.isArray(before.body.health.checks));assert.equal(before.body.health.lastDiagnostic,null);
+  await app.unlock(owner);
+  assert.equal((await app.request(endpoint,{reason:'x'},owner.cookie)).status,400);
+  assert.equal((await app.request(endpoint,{reason},owner.cookie,{Origin:'https://untrusted.example'})).status,403);
+  const result=await app.request(endpoint,{reason},owner.cookie);
+  assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(result.body.state,'ok');
+  for(const key of ['database','integrity','foreignKeys','storageWritable'])assert.equal(result.body[key],'ok',key);
+  assert.equal(result.headers.get('cache-control'),'no-store');
+  const after=await app.request('/api/admin/operations',undefined,owner.cookie);
+  assert.equal(after.body.health.lastDiagnostic.id,result.body.id);assert.equal(after.body.health.diagnosticRuns.length,1);
+  assert.doesNotMatch(JSON.stringify(after.body.health),new RegExp([password,owner.secret,'owner@example.com','trader@example.com',app.folder].map(value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')));
+  assert.equal((await app.request('/api/me',undefined,owner.cookie)).status,200);
+  assert.equal((await app.request('/api/me',undefined,trader.cookie)).status,200);
+  app.inspect(db=>{
+   const actions=db.prepare("SELECT action FROM admin_audit WHERE action LIKE 'operations.diagnostic-%'").all().map(row=>row.action);
+   assert.deepEqual(actions.sort(),['operations.diagnostic-completed','operations.diagnostic-requested']);
+  });
+ }finally{await app.close();}
+});
+
+test('a completed diagnostic cannot return private operational results to an administrator whose session was revoked',async()=>{
+ const scriptFolder=await mkdtemp(path.join(tmpdir(),'fa-diagnostic-delay-')),diagnosticScript=path.join(scriptFolder,'delayed.mjs');
+ await writeFile(diagnosticScript,"process.once('message',()=>setTimeout(()=>process.send({database:'ok',integrity:'ok',foreignKeys:'ok',storageWritable:'ok'}),300));");
+ const app=await fixture({health:{diagnosticScript}});try{
+  const owner=await app.register('owner@example.com',{factor:true});await app.unlock(owner);
+  const pending=app.request('/api/admin/operations/diagnose',{reason},owner.cookie);
+  let running=false;
+  for(let n=0;n<100;n++){
+   running=app.inspect(db=>Boolean(db.prepare('SELECT 1 FROM operations_diagnostic_lease').get()));
+   if(running)break;
+   await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.equal(running,true);
+  app.inspect(db=>db.prepare('DELETE FROM sessions WHERE token=?').run(digest(owner.cookie.slice('fa_session='.length))));
+  const result=await pending;assert.equal(result.status,401);
+  assert.equal(result.body.integrity,undefined);assert.equal(result.body.storageWritable,undefined);
+  app.inspect(db=>assert.equal(db.prepare("SELECT state FROM operations_diagnostic_runs ORDER BY started_at DESC LIMIT 1").get().state,'ok'));
+ }finally{await app.close();await rm(scriptFolder,{recursive:true,force:true});}
 });
 
 test('a restored-account recovery flag blocks sign-in until a real password reset clears it and preserves the enrolled authenticator',async()=>{

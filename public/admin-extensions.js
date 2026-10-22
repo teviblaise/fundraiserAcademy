@@ -7,6 +7,41 @@ const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const stateLabel=value=>text(value).replace(/_/g,' ')||'Not recorded';
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
 const count=value=>Number.isSafeInteger(value)&&value>=0?value.toLocaleString():'Not recorded';
+const healthStates={ok:'OK',warning:'Needs attention',critical:'Critical',disabled:'Not enabled'};
+const diagnosticStates={ok:'Passed',warning:'Needs attention',critical:'Failed',running:'Running'};
+const timestamp=value=>Number.isSafeInteger(value)&&value>=0?value:null;
+const boundedText=value=>text(value).slice(0,1000);
+
+// A downloaded readiness report contains only the displayed aggregate fields.
+// Ignore unexpected response properties, including private provider/storage data.
+export function operationalReport(value){
+  const health=object(value)?value:{},metrics=object(health.metrics)?health.metrics:{};
+  const diagnostic=value=>{
+    if(!object(value))return null;
+    const field=(name,allowed)=>allowed.includes(value[name])?value[name]:'not_checked';
+    const failureCodes=['DIAGNOSTIC_TIMEOUT','DIAGNOSTIC_DATABASE_FAILED','DIAGNOSTIC_INTEGRITY_FAILED','DIAGNOSTIC_FOREIGN_KEYS_FAILED','DIAGNOSTIC_STORAGE_FAILED','DIAGNOSTIC_WORKER_FAILED','DIAGNOSTIC_INTERRUPTED'];
+    return {id:/^[a-f0-9-]{36}$/i.test(text(value.id))?value.id:null,startedAt:timestamp(value.startedAt),completedAt:timestamp(value.completedAt),state:Object.hasOwn(diagnosticStates,value.state)?value.state:'warning',database:field('database',['ok','failed','unavailable']),integrity:field('integrity',['ok','failed','not_checked']),foreignKeys:field('foreignKeys',['ok','failed','not_checked']),storageWritable:field('storageWritable',['ok','failed','not_checked']),failureCode:failureCodes.includes(value.failureCode)?value.failureCode:null};
+  };
+  return {
+    version:1,checkedAt:timestamp(health.checkedAt),overall:['healthy','attention','critical'].includes(health.overall)?health.overall:'attention',
+    notice:'Local readiness and configuration checks do not confirm provider availability, inbox receipt, persistent storage, or offsite recovery.',
+    checks:rows(health.checks).filter(object).slice(0,100).map(item=>({id:/^[a-z0-9_-]{1,80}$/.test(text(item.id))?item.id:'check',label:boundedText(item.label),state:Object.hasOwn(healthStates,item.state)?item.state:'warning',summary:boundedText(item.summary),action:boundedText(item.action)})),
+    metrics:Object.fromEntries(['uptimeSeconds','rssBytes','heapUsedBytes','databaseBytes','walBytes','storageFreeBytes','storageTotalBytes'].map(key=>[key,finite(metrics[key])&&metrics[key]>=0?metrics[key]:null])),
+    diagnosticRunning:health.diagnosticRunning===true,lastDiagnostic:diagnostic(health.lastDiagnostic),diagnosticRuns:rows(health.diagnosticRuns).slice(0,10).map(diagnostic).filter(Boolean)
+  };
+}
+
+function bytes(value){
+  if(!finite(value)||value<0)return 'Not recorded';
+  const units=['B','KiB','MiB','GiB','TiB'];let index=0;
+  while(value>=1024&&index<units.length-1){value/=1024;index++;}
+  return `${value.toLocaleString(undefined,{maximumFractionDigits:index?1:0})} ${units[index]}`;
+}
+function uptime(value){
+  if(!finite(value)||value<0)return 'Not recorded';
+  const minutes=Math.floor(value/60),hours=Math.floor(minutes/60),days=Math.floor(hours/24);
+  return days?`${days}d ${hours%24}h`:hours?`${hours}h ${minutes%60}m`:`${minutes}m`;
+}
 
 export function performanceFilters(input={}){
   const result={userId:positiveInteger(input.userId,'client ID'),source:input.source||'assessment'};
@@ -119,15 +154,65 @@ export function createAdminExtensions(ctx){
   }
   function backupAction(){return openAction({title:'Create an encrypted backup',description:'Create a consistent private database and authentication-key backup, then verify recovery in an isolated temporary directory. The backup encryption key must be kept separately. This does not replace the running database.',fields:[reasonField],submit:'Back up and verify',execute:async form=>{const result=await post('/api/admin/operations/backup',{reason:form.get('reason')});return{...result,message:result.verified===true?'Encrypted backup created and isolated recovery verification passed.':'The backup operation returned. Inspect its recorded status.'};}});}
   function checkAction(backups,selected){return openAction({title:'Check recovery in isolation',description:'Decrypt the selected backup into a temporary directory, verify database integrity and keys, reapply current deletions, and check authentication recovery. Production records are not replaced.',fields:[{name:'backupId',label:'Backup to verify',choices:[['','Latest backup'],...backups.map(item=>[item.id,`${date(item.createdAt)} · ${item.id}`])],value:selected||'',required:false},reasonField],submit:'Run recovery check',execute:async form=>{const result=await post('/api/admin/operations/check',{backupId:form.get('backupId')||undefined,reason:form.get('reason')});return{...result,message:result.integrity==='ok'&&result.productionModified===false?'Isolated recovery verification passed. Production was not modified.':'The recovery check returned. Inspect its recorded result.'};}});}
+  function diagnosticAction(){return openAction({title:'Run database & storage diagnostics',description:'Check database integrity and relationships, and test private storage access. This does not repair records or contact email or trading providers.',fields:[reasonField],submit:'Run diagnostics',execute:async form=>{
+    const result=await post('/api/admin/operations/diagnose',{reason:form.get('reason')});
+    return {...result,message:result.state==='ok'?'Database and storage diagnostics passed. Review the separate readiness warnings.':result.state==='critical'?'Diagnostics found a problem. Review the recorded result and follow the readiness actions.':'Diagnostics need attention. Review the recorded result before proceeding.'};
+  }});}
+  function downloadHealth(health,epoch){
+    if(!isCurrent(epoch))return;
+    let url,anchor;
+    try{
+      const report=operationalReport(health);
+      if(report.checkedAt===null)throw new Error('Refresh the health checks before downloading a report.');
+      url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)+'\n'],{type:'application/json'}));
+      anchor=document.createElement('a');anchor.href=url;anchor.download=`fundraiser-academy-operations-${new Date(report.checkedAt).toISOString().slice(0,10)}.json`;
+      document.body.append(anchor);anchor.click();
+      notify('The readiness report download started. Keep operational reports private.');
+    }catch{notify('The readiness report could not be downloaded. Refresh the checks and try again.',true);}
+    finally{anchor?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  }
+  function operationalHealth(health,epoch){
+    const data=operationalReport(health),metrics=data.metrics;
+    const area=card('Operational health','Current local checks and configuration, with actions for issues that need staff attention. Refresh to collect a new snapshot.');
+    area.append(detailGrid([['Overall status',data.checkedAt===null?'Unavailable':({healthy:'Healthy',attention:'Needs attention',critical:'Critical'})[data.overall]],['Checked',date(data.checkedAt)],['Server uptime',uptime(metrics.uptimeSeconds)],['Process memory',bytes(metrics.rssBytes)],['Heap in use',bytes(metrics.heapUsedBytes)],['Database size',bytes(metrics.databaseBytes)],['Write-ahead log',bytes(metrics.walBytes)],['Storage available',`${bytes(metrics.storageFreeBytes)} of ${bytes(metrics.storageTotalBytes)}`]]));
+    if(data.checks.length){
+      const checks=node('div','mt-5 grid min-w-0 gap-3 lg:grid-cols-2');checks.setAttribute('aria-label','Operational readiness checks');
+      for(const item of data.checks){
+        const check=node('article','min-w-0 rounded-xl border border-line bg-[#101010] p-4');
+        const heading=node('div','flex flex-wrap items-start justify-between gap-2');
+        const label=node('h3','min-w-0 break-words text-sm font-semibold',item.label||'Readiness check');
+        const severity=item.state==='critical'?'bg-rose-400/10 text-rose-300':item.state==='warning'?'bg-amber-300/10 text-amber-300':'bg-white/5 text-muted';
+        heading.append(label,node('span',`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${severity}`,healthStates[item.state]));
+        const action=node('div','mt-3 border-t border-line pt-3');
+        action.append(node('p','text-xs font-semibold','Next action'),node('p','mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted',item.action||'No action recorded'));
+        check.append(heading,node('p','mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted',item.summary||'Not recorded'),action);checks.append(check);
+      }
+      area.append(checks);
+    }else area.append(note('No health checks are available yet. Refresh after the application update finishes.'));
+    area.append(note(data.notice));
+    const actions=group(button('Refresh health checks',async()=>{if(!isCurrent(epoch))return;try{await reload();}catch{notify('The health checks could not be refreshed. Try again.',true);}}));
+    if(can('system.read')){
+      const run=button('Run diagnostics',()=>{if(isCurrent(epoch)&&!data.diagnosticRunning)return diagnosticAction();});run.disabled=data.diagnosticRunning;actions.append(run);
+      if(data.checkedAt!==null)actions.append(button('Download readiness report',()=>downloadHealth(data,epoch)));
+    }
+    area.append(actions);append(area);
+    const diagnostics=card('Database & storage diagnostics','Read-only database checks and a private storage-access probe. A passing check does not verify offsite backups or external services.');
+    if(data.diagnosticRunning)diagnostics.append(note('A database and storage diagnostic is running. Refresh health checks to see its completed result.'));
+    if(data.lastDiagnostic)diagnostics.append(detailGrid([['Latest result',diagnosticStates[data.lastDiagnostic.state]],['Completed',date(data.lastDiagnostic.completedAt)],['Database access',stateLabel(data.lastDiagnostic.database)],['Integrity',stateLabel(data.lastDiagnostic.integrity)],['Foreign keys',stateLabel(data.lastDiagnostic.foreignKeys)],['Private storage access',stateLabel(data.lastDiagnostic.storageWritable)],['Failure code',data.lastDiagnostic.failureCode||'None recorded']]));
+    else diagnostics.append(note('Diagnostics have not been run. Use Run diagnostics to check the current database and storage.'));
+    if(data.diagnosticRuns.length)diagnostics.append(table([{title:'Started',value:item=>date(item.startedAt)},{title:'Completed',value:item=>date(item.completedAt)},{title:'Result',value:item=>diagnosticStates[item.state]},{title:'Integrity',value:item=>stateLabel(item.integrity)},{title:'Foreign keys',value:item=>stateLabel(item.foreignKeys)},{title:'Storage access',value:item=>stateLabel(item.storageWritable)},{title:'Failure code',value:item=>item.failureCode||'—'}],data.diagnosticRuns));
+    append(diagnostics);
+  }
   function resolveIncident(item){return openAction({title:'Resolve an operational incident',description:'Mark this sanitized error group as reviewed. Its history is preserved, and a new occurrence will reopen it.',fields:[reasonField],submit:'Mark incident resolved',execute:form=>post(`/api/admin/errors/${item.id}/resolve`,{reason:form.get('reason')})});}
   async function operations(epoch){
     const query=getQuery();const [status,errors]=await Promise.all([api('/api/admin/operations'),api('/api/admin/errors'+queryString({limit:25,offset:query.offset||0,state:query.errorState||'open'}))]);if(!isCurrent(epoch))return;
+    operationalHealth(status.health,epoch);
     const area=card('Backups & recovery','Consistent encrypted backups and automatic isolated recovery verification. Local backups still need durable storage and an independent offsite copy.');
     area.append(detailGrid([['Automatic backups',status.automaticBackups?'Scheduled':'Not running'],['Encryption',status.encrypted?'Enabled':'Not available'],['Interval',finite(status.backupIntervalHours)?`${status.backupIntervalHours} hours`:'Not recorded'],['Retention',Number.isSafeInteger(status.retentionCount)?`${status.retentionCount} backups`:'Not recorded'],['Next scheduled backup',date(status.nextBackupAt)],['Operation',status.running?'Running':'Idle'],['Offsite copy',status.offsiteConfigured?'Configured':'Not configured'],['Open error groups',count(status.errors?.open)]]));
     area.append(note(text(status.backupKeyNotice)),note(text(status.recoveryNotice)));
     if(can('system.read'))area.append(group(button('Create backup & verify',backupAction),button('Check latest recovery',()=>checkAction(rows(status.backups)))));
     append(area);
-    const backups=card('Private backup history','Artifacts remain outside the public website. Backup bytes and keys are not returned to this browser.');backups.append(table([{title:'Created',value:item=>date(item.createdAt)},{title:'Backup ID',value:item=>item.id},{title:'Encrypted size',value:item=>Number.isSafeInteger(item.bytes)?`${item.bytes.toLocaleString()} bytes`:'Not recorded'},{title:'State',value:item=>stateLabel(item.state)},{title:'Verified',value:item=>date(item.verifiedAt)},{title:'Action',value:item=>button('Verify recovery',()=>checkAction(rows(status.backups),item.id))}],rows(status.backups)));append(backups);
+    const backups=card('Private backup history','Artifacts remain outside the public website. Backup bytes and keys are not returned to this browser.');backups.append(table([{title:'Created',value:item=>date(item.createdAt)},{title:'Backup ID',value:item=>item.id},{title:'Encrypted size',value:item=>Number.isSafeInteger(item.bytes)?`${item.bytes.toLocaleString()} bytes`:'Not recorded'},{title:'State',value:item=>stateLabel(item.state)},{title:'Verified',value:item=>date(item.verifiedAt)},{title:'Action',value:item=>can('system.read')?button('Verify recovery',()=>checkAction(rows(status.backups),item.id)):'Privileged access required'}],rows(status.backups)));append(backups);
     const runs=card('Operational runs','Completed verification results describe an isolated copy, never an automatic restore over the live database.');runs.append(table([{title:'Started',value:item=>date(item.startedAt)},{title:'Kind',value:item=>stateLabel(item.kind)},{title:'Status',value:item=>stateLabel(item.status)},{title:'Failure code',value:item=>item.failureCode||'—'},{title:'Result',value:item=>{const result=item.result?.recovery||item.result||{};return result.integrity==='ok'?`Integrity OK · ${count(result.deletionsReapplied)} deletion records reapplied · ${count(result.passwordResetsRequired)} accounts require password recovery`:item.status==='completed'?'Completed':'Not completed';}}],rows(status.recentRuns)));append(runs);
     const errorPage=pageRows(errors),monitor=card('Error monitoring','Server-side incidents are grouped by sanitized route and error code. Request bodies, credentials, private exception text, and full stacks are not shown.');
     monitor.append(filters([{name:'errorState',label:'Incident state',choices:[['open','Open'],['resolved','Resolved'],['all','All recorded']]}],query,values=>{setQuery({...values,offset:0});reload();}),table([{title:'Category',value:item=>stateLabel(item.category)},{title:'Code',value:item=>item.code},{title:'Route',value:item=>`${item.method} ${item.route}`},{title:'Description',value:item=>item.description},{title:'Occurrences',value:item=>count(item.count)},{title:'First seen',value:item=>date(item.firstSeen)},{title:'Latest',value:item=>date(item.lastSeen)},{title:'Review',value:item=>item.state==='open'&&can('system.read')&&typeof item.id==='string'&&/^[a-f0-9]{64}$/.test(item.id)?button('Resolve incident',()=>resolveIncident(item)):stateLabel(item.state)}],errorPage.items),navigation(errorPage));append(monitor);

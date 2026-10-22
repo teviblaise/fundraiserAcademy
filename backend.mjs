@@ -229,6 +229,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     systemStatus(){
       const mail=delivery.status(0);
       const stream=marketData.streamStatus?.('BTCUSD');
+      const sponsored=platform.sponsored.status();
       return {generatedAt:now(),application:{mode:'single-server',database:'SQLite',nodeVersion:process.versions.node},
         security:{adminTwoFactorRequired:true,privilegeMinutes:5,sessionDays:7,idleHours:24,ownerConfigured:Boolean(adminOptions?.ownerEmails||process.env.ADMIN_OWNER_EMAILS)},
         integrations:[
@@ -236,12 +237,15 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           {name:'Forex reference prices',configured:Boolean(process.env.TWELVE_DATA_API_KEY),status:process.env.TWELVE_DATA_API_KEY?'configured':'not_configured',description:'Twelve Data Basic periodic quotes. Provider availability is checked during execution.'},
           {name:'Crypto reference prices',configured:true,status:stream?.connected?'stream_connected':'REST_fallback',description:'Public Coinbase prices; source freshness still controls simulated fills.'},
           {name:'Generative support',configured:Boolean(process.env.SUPPORT_AI_API_KEY),status:process.env.SUPPORT_AI_API_KEY?'configured':'academy_guide',description:'Company guide remains available without AI credentials.'},
-          {name:'Sponsored-account and payment integrations',configured:false,status:'manual_records',description:'Account, statement, and payout records are entered by authorized staff. No external account issuance or money transfer is performed.'}],
+          {name:'Sponsored MetaTrader performance',configured:sponsored.configured,status:sponsored.configured?'configured':'not_configured',description:'MetaApi reads linked existing accounts. Configuration does not confirm live synchronization; inspect Operations and MetaTrader connections.'},
+          {name:'Payment execution',configured:false,status:'manual_records',description:'Staff reconcile statements and record externally executed payments. This application does not send money.'}],
         storage:{durability:'Keep the private database directory on persistent operator-managed storage.',backups:'Encrypted scheduled backups and isolated recovery checks are available in Operations. Preserve the separate backup encryption key and copy backups off this server.'},
         outbox:{pending:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status IN ('pending','sending')").get().n,failed:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status='failed'").get().n}};
     }});
   const platform=createAccountPlatform(db,databasePath,{admin:adminConsole,access:adminAccess,sessions,twoFactor,
-    user,sessionHash,reauthenticate,body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,now,options:platformOptions});
+    user,sessionHash,reauthenticate,body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,
+    configuration:()=>({emailAvailable:delivery.status(0).emailAvailable,forexConfigured:Boolean(process.env.TWELVE_DATA_API_KEY)}),
+    now,options:platformOptions});
   const revision = state => Number.isSafeInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   const load = id => {
     const state = ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));

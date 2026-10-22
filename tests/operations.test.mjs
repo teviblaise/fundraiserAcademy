@@ -8,6 +8,7 @@ import path from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import webPush from 'web-push';
 import {createOperations} from '../operations.mjs';
+import {createOperationalHealth} from '../operational-health.mjs';
 import {createTwoFactor,generateTotpCode} from '../two-factor.mjs';
 import {createAccountControls} from '../account-controls.mjs';
 
@@ -217,6 +218,37 @@ test('operational CLI validates commands and only restores into a new destinatio
   const target=path.join(app.folder,'cli-recovery');const result=await cli(app.database,['restore','--backup',backup.backupId,'--target',target,'--confirmation','RESTORE TO NEW DIRECTORY']);assert.equal(result.code,0,result.err);assert.equal(JSON.parse(result.out).restoredToNewDirectory,true);
   assert.equal((await cli(path.join(app.folder,'missing.sqlite'),['status'])).code,1);assert.equal(app.db.prepare('SELECT recovery_required FROM users').get().recovery_required,0);
  }finally{await app.close();}
+});
+
+test('operational CLI exposes safe health exit codes and records real read-only diagnostics',async()=>{
+ const app=await fixture();try{
+  const health=await cli(app.database,['health']);assert.equal(health.code,2,health.err);
+  const report=JSON.parse(health.out);assert.ok(['attention','critical'].includes(report.overall));assert.ok(report.checks.length>0);
+  assert.doesNotMatch(health.out,/private-owner@example|private-original-password|private-old-session|private-old-reset|\/tmp\//);
+  const diagnosed=await cli(app.database,['diagnose']);assert.equal(diagnosed.code,0,diagnosed.err);
+  const result=JSON.parse(diagnosed.out);assert.equal(result.state,'ok');assert.equal(result.integrity,'ok');assert.equal(result.foreignKeys,'ok');assert.equal(result.storageWritable,'ok');
+  assert.equal(app.db.prepare('SELECT count(*) n FROM sessions').get().n,1);
+  assert.equal(app.db.prepare('SELECT recovery_required FROM users').get().recovery_required,0);
+  const after=JSON.parse((await cli(app.database,['health'])).out);assert.equal(after.lastDiagnostic.id,result.id);
+  for(const action of ['health','diagnose'])assert.equal((await cli(app.database,[action,'--backup',randomUUID()])).code,1);
+ }finally{await app.close();}
+});
+
+test('recovery removes copied diagnostic leases and marks interrupted diagnostic runs safely',async()=>{
+ const app=await fixture();let health;try{
+  health=createOperationalHealth(app.db,app.database,{operations:app.operations});
+  const id=randomUUID();
+  app.db.prepare("INSERT INTO operations_diagnostic_runs(id,started_at,state) VALUES(?,?,'running')").run(id,app.time());
+  app.db.prepare('INSERT INTO operations_diagnostic_lease VALUES(1,?,?,?,?)').run(randomUUID(),process.pid,id,app.time()+600000);
+  const backup=await app.operations.backup(),target=path.join(app.folder,'diagnostic-recovery');
+  await app.operations.restoreToDirectory(backup.backupId,{targetDirectory:target,confirmation:'RESTORE TO NEW DIRECTORY'});
+  const restored=new DatabaseSync(path.join(target,'academy.sqlite'));try{
+   assert.equal(restored.prepare('SELECT count(*) n FROM operations_diagnostic_lease').get().n,0);
+   const row=restored.prepare('SELECT state,completed_at,failure_code FROM operations_diagnostic_runs WHERE id=?').get(id);
+   assert.equal(row.state,'critical');assert.equal(row.failure_code,'DIAGNOSTIC_INTERRUPTED');assert.ok(row.completed_at>0);
+  }finally{restored.close();}
+  assert.equal(app.db.prepare('SELECT count(*) n FROM operations_diagnostic_lease').get().n,1,'the live diagnostic lease remains unchanged');
+ }finally{await health?.close();await app.close();}
 });
 
 

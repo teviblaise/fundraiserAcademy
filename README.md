@@ -221,7 +221,24 @@ MetaTrader partial closes can be separate closing fills; their win rate is not a
 round-trip-position win rate. Standalone costs affect net results without being
 assigned to an invented winning or losing position.
 
-### Error monitoring, backups, and recovery checks
+### Operational health, error monitoring, and recovery
+
+Open **Admin → Operations & recovery** for an actionable health report. It flags
+unavailable database/storage checks, low disk space, old or failed backups,
+notification delivery problems, missing email/forex configuration, and stale
+active MetaApi connections. Numeric metrics show runtime memory, database/WAL
+size, and available storage. Refresh to collect current local observations or
+download the sanitized health report for an operator review.
+
+**Run diagnostics** requires a reason and fresh staff authentication. It checks
+the live database with bounded, read-only SQLite `quick_check` and foreign-key checks
+in an isolated subprocess, and probes private storage with a temporary file that is
+removed afterward. The result and recent diagnostic history contain fixed status
+fields and safe failure codes, without customer records, provider account IDs,
+paths, secret values, or raw SQL errors. It does not repair data, send messages,
+contact providers, or restore the live database. Email configuration does not
+prove inbox delivery; storage capacity does not prove persistence or an offsite
+copy. Review those requirements separately even when local checks pass.
 
 Operations & recovery shows bounded server-error fingerprints, occurrence counts,
 sanitized routes, backup history, and recovery-check results. Raw request bodies,
@@ -248,11 +265,20 @@ Trusted operators can use the existing private `DATABASE_PATH`:
 
 ```sh
 npm run operations -- status
+npm run operations -- health
+npm run operations -- diagnose
 npm run operations -- backup
 npm run operations -- verify
 npm run operations -- verify --backup BACKUP_UUID
 npm run operations -- restore --backup BACKUP_UUID --target /secure/new-academy-recovery --confirmation "RESTORE TO NEW DIRECTORY"
 ```
+
+`health` returns the same sanitized aggregate checks; exit code 0 means
+`healthy`, and 2 means `attention` or `critical`. `diagnose` returns a recorded
+diagnostic result; exit code 0 means `ok`, and 2 means `warning` or `critical`.
+Both use exit code 1 for a command/usage failure. These commands perform no
+external delivery or provider request. The standalone CLI does not start the
+application's background schedulers.
 
 The CLI requires a healthy current database and its latest deletion ledger. It
 creates a new private directory and refuses to replace an existing target or live

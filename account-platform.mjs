@@ -3,6 +3,7 @@ import {createAccountControls} from './account-controls.mjs';
 import {createSponsoredSync} from './sponsored-sync.mjs';
 import {createPerformanceReports} from './performance-reports.mjs';
 import {createOperations} from './operations.mjs';
+import {createOperationalHealth} from './operational-health.mjs';
 
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const failure=(status,message,code)=>Object.assign(new Error(message),{status,code});
@@ -16,11 +17,12 @@ const userId=value=>{
 };
 
 export function createAccountPlatform(db,databasePath,{admin,access,sessions,twoFactor,user,sessionHash,reauthenticate,
-  body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,now=Date.now,options={}}){
+  body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,configuration,now=Date.now,options={}}){
   const controls=createAccountControls(db,{access,now});
   const sponsored=createSponsoredSync(db,{access,workflows:admin.workflows,now,...options.sponsored});
   const reports=createPerformanceReports(db,{now,sponsoredSync:sponsored});
   const operations=createOperations(db,databasePath,{now,autoStart:false,deletionLedger:()=>controls.exportDeletionLedger(),...options.operations});
+  const health=createOperationalHealth(db,databasePath,{now,operations,sponsored,configuration,...options.health});
   db.exec(`CREATE TABLE IF NOT EXISTS account_tool_privileges (
     token TEXT NOT NULL REFERENCES sessions(token) ON DELETE CASCADE,
     purpose TEXT NOT NULL CHECK(purpose IN ('export','delete','payout')),
@@ -39,7 +41,7 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
     const connection=/^\/api\/admin\/connections\/([a-f0-9-]{36})\/(link|unlink|sync)$/.exec(pathname);
     const completion=/^\/api\/admin\/privacy\/([1-9]\d*)\/complete$/.exec(pathname);
     const resolution=/^\/api\/admin\/errors\/([a-f0-9]{64})\/resolve$/.exec(pathname);
-    const adminKnown=['/api/admin/connections','/api/admin/performance','/api/admin/operations','/api/admin/errors','/api/admin/operations/backup','/api/admin/operations/check','/api/admin/privacy'].includes(pathname)||connection||completion||resolution;
+    const adminKnown=['/api/admin/connections','/api/admin/performance','/api/admin/operations','/api/admin/errors','/api/admin/operations/backup','/api/admin/operations/check','/api/admin/operations/diagnose','/api/admin/privacy'].includes(pathname)||connection||completion||resolution;
     if(!clientPaths.has(pathname)&&!adminKnown)return false;
     requireOrigin(req);const id=current.id;
     const query=Object.fromEntries(new URL(req.url,'http://localhost').searchParams);
@@ -54,7 +56,7 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
           const page=admin.finance.accounts(query);
           result={...page,accounts:page.accounts.map(account=>({...account,connection:sponsored.readAccount(account.id)})),provider:sponsored.status()};
         }else if(pathname==='/api/admin/performance'){const {userId:target,...filters}=query;result=reports.admin(userId(target),filters);}
-        else if(pathname==='/api/admin/operations')result=operations.status();
+        else if(pathname==='/api/admin/operations')result={...operations.status(),health:health.status()};
         else if(pathname==='/api/admin/errors')result=operations.errors(query);
         else if(pathname==='/api/admin/privacy')result=controls.requests(query);
         else throw failure(405,'Use POST to perform this action.');
@@ -85,6 +87,13 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
         db.exec('BEGIN IMMEDIATE');
         try{result=operations.resolveError(resolution[1]);access.audit(id,'operations.error-resolved',{reason:explanation,detail:{source:'admin-dashboard',subjectType:resolution[1]}});db.exec('COMMIT');}
         catch(error){db.exec('ROLLBACK');throw error;}
+      }else if(pathname==='/api/admin/operations/diagnose'){
+        const explanation=reason(input.reason);
+        limit(req,`operations-diagnostic:${id}`,6,600000);
+        access.audit(id,'operations.diagnostic-requested',{reason:explanation,detail:{source:'admin-dashboard'}});
+        result=await health.diagnose();
+        admin.privileged(req,id,'system.read');
+        access.audit(id,'operations.diagnostic-completed',{reason:explanation,detail:{source:'admin-dashboard',status:result.state}});
       }else if(pathname==='/api/admin/operations/backup'||pathname==='/api/admin/operations/check'){
         const explanation=reason(input.reason);
         access.audit(id,pathname.endsWith('/backup')?'operations.backup-requested':'operations.recovery-check-requested',{reason:explanation,detail:{source:'admin-dashboard'}});
@@ -126,9 +135,9 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
     else throw failure(405,'Use GET for this resource.');
     respond(res,200,result);return true;
   }
-  return {handle,controls,sponsored,reports,operations,
+  return {handle,controls,sponsored,reports,operations,health,
     start(){sponsored.start();operations.start();},
-    async close(){await Promise.allSettled([sponsored.close(),operations.close()]);},
+    async close(){await Promise.allSettled([sponsored.close(),operations.close(),health.close()]);},
     capture(error,metadata){try{return operations.capture(error,metadata);}catch{return null;}}
   };
 }

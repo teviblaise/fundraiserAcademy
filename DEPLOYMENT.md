@@ -252,6 +252,54 @@ closing-fill versus round-trip-position counts, and cash-flow-adjusted drawdown
 before using statistics for company decisions. Consistency statistics do not add
 new assessment rules.
 
+## Operational health and diagnostics
+
+Sign in to `/admin.html` and open **Operations & recovery**. The health report
+combines local database/storage checks, backup freshness and failures, notification
+queue totals, email/forex configuration, active MetaApi synchronization, and open
+server incidents. Metrics and the downloadable JSON report contain aggregate
+values, not recipient addresses, provider account IDs, filesystem paths, or keys.
+Use Refresh for a current observation. Keep detailed checks behind staff access;
+public `/healthz` remains a minimal availability endpoint.
+
+**Run diagnostics** requires fresh staff authentication and an audit reason. It
+performs bounded, read-only SQLite `quick_check` and foreign-key checks in a separate
+subprocess, plus a private-storage temporary write probe that is cleaned up afterward.
+Recent results are recorded. It does not repair records, send test messages,
+contact MetaApi or market providers, or replace the database.
+
+Treat each reported action as an operator task:
+
+- For failed/overdue notifications, check the application's Resend sender/origin
+  settings and provider delivery logs. Confirm delivery using an inbox you control;
+  configuration alone is not delivery evidence. Review failed messages before
+  deciding whether to request new confirmations or password-reset links.
+- For stale MetaApi connections, check the server token, provider status, approved
+  assignment, and deployed account connection. Use the connection's existing sync
+  control after resolving its cause; local diagnostics do not call MetaApi.
+- For low or unavailable storage, inspect the hosting volume and permissions.
+  Expand durable storage or follow retention policy; do not remove live SQLite,
+  WAL, authentication keys, or the only usable backup to silence a warning.
+- For failed or overdue backups, inspect the latest safe job code, available
+  storage, and original encryption key. Create a new backup and run its isolated
+  recovery check after resolving the cause.
+- For a failed database diagnostic, preserve the current installation and involve
+  its operator. Check a verified backup in isolation before planning recovery;
+  this report provides no automatic live repair.
+
+Missing offsite protection and unverified persistence remain visible operator
+requirements. Available capacity cannot establish that Render storage survives
+restarts or that a separate offsite copy exists. Diagnostic results also cannot
+prove provider availability, external delivery, or a complete disaster-recovery
+procedure. Never put secrets or private customer records in reasons, chat, or logs.
+
+Trusted operators can also run `npm run operations -- health` and
+`npm run operations -- diagnose`. Health exits 0 for `healthy`, 2 for `attention`
+or `critical`; diagnostics exits 0 for `ok`, 2 for `warning` or `critical`. Both
+exit 1 for command/usage failures. The CLI reports its own runtime and does not
+start background schedulers; use the running admin view to inspect application
+workers.
+
 ## Scheduled backups and recovery checks
 
 The running application schedules an initial backup after about 30 seconds and
@@ -280,6 +328,8 @@ Run these commands on the trusted installation using its existing `DATABASE_PATH
 
 ```sh
 npm run operations -- status
+npm run operations -- health
+npm run operations -- diagnose
 npm run operations -- backup
 npm run operations -- verify
 npm run operations -- verify --backup BACKUP_UUID

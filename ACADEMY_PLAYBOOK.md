@@ -232,6 +232,24 @@ analysis describes past records and does not create extra assessment rules.
 
 ### Operational monitoring and recovery
 
+Assign an operator to **Admin → Operations & recovery**. Refresh its health report
+to review database/storage availability, backup freshness, notification queue
+failures/overdue sends, email/forex configuration, and stale active MetaApi feeds.
+Download the sanitized aggregate report when a review needs a portable record.
+Recipients, account IDs, paths, and secrets are excluded. A configured sender is
+not proof of inbox delivery, and free space is not proof of persistent or offsite
+storage.
+
+Run diagnostics with a reason and fresh staff authentication when investigating
+an issue. It uses bounded read-only SQLite quick_check/foreign-key checks in an
+isolated subprocess and a temporary private-storage write probe. It records safe
+results without changing customer records, contacting providers, sending email,
+repairing data, or replacing the live database. For a failed check, preserve the
+installation and investigate the fixed failure code before planning recovery.
+Use the deployment runbook for delivery failures, stale connections, low storage,
+and failed/old backups. Do not ask customers to send credentials or copy private
+records into an incident reason.
+
 Review sanitized server-error fingerprints, counts, failed jobs, encrypted backup
 history, and isolated recovery results from Operations & recovery. The local error
 view does not contain raw request bodies, exception text, or credentials. Assign

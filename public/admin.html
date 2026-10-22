@@ -12,9 +12,9 @@
 </head>
 <body class="min-h-screen">
   <a href="#admin-content" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-lime focus:px-4 focus:py-2 focus:text-black">Skip to administration content</a>
-  <header class="sticky top-0 z-30 flex min-h-20 items-center justify-between gap-4 border-b border-line bg-paper px-4 py-4 sm:px-6 lg:ml-64 lg:px-8">
-    <div class="flex min-w-0 items-center gap-3"><button id="admin-menu" type="button" class="desk-action lg:hidden" aria-expanded="false" aria-controls="admin-sidebar">Menu ☰</button><div><p class="text-[10px] font-semibold uppercase tracking-[2px] text-lime">FUNDRAISER ACADEMY</p><p class="text-sm font-semibold">Administration</p></div></div>
-    <div class="flex shrink-0 flex-wrap items-center justify-end gap-2"><span id="admin-role" class="hidden rounded-full border border-line px-3 py-1 text-xs text-muted sm:block"></span><button id="admin-unlock" type="button" class="desk-action" hidden>Unlock actions</button><a href="/client.html" class="desk-action hidden sm:inline-block">Client dashboard</a><button id="admin-logout" type="button" class="desk-action">Log out</button></div>
+  <header class="sticky top-0 z-30 flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-line bg-paper px-4 py-4 sm:flex-nowrap sm:px-6 lg:ml-64 lg:px-8">
+    <div class="flex min-w-0 w-full items-center gap-3 sm:w-auto"><button id="admin-menu" type="button" class="desk-action lg:hidden" aria-expanded="false" aria-controls="admin-sidebar">Menu ☰</button><div><p class="text-[10px] font-semibold uppercase tracking-[2px] text-lime">FUNDRAISER ACADEMY</p><p class="text-sm font-semibold">Administration</p></div></div>
+    <div class="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto"><span id="admin-role" class="hidden rounded-full border border-line px-3 py-1 text-xs text-muted sm:block"></span><button id="admin-unlock" type="button" class="desk-action" hidden>Unlock actions</button><a href="/client.html" class="desk-action hidden sm:inline-block">Client dashboard</a><button id="admin-logout" type="button" class="desk-action">Log out</button></div>
   </header>
   <button id="admin-nav-overlay" type="button" class="fixed inset-0 z-40 bg-black/80 lg:hidden" aria-label="Close administration menu" hidden></button>
   <aside id="admin-sidebar" class="fixed inset-y-0 left-0 z-50 hidden w-64 overflow-y-auto border-r border-line bg-[#111111] p-5 lg:block" aria-label="Administration sidebar">

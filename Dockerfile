@@ -13,7 +13,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY vendor ./vendor
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --chown=node:node server.mjs backend.mjs password-recovery.mjs passwords.mjs two-factor.mjs sessions.mjs delivery.mjs certificates.mjs contracts.mjs market-data.mjs live-quotes.mjs support.mjs support-ai.mjs support-admin.mjs leaderboard.mjs admin.mjs admin-access.mjs admin-cli.mjs admin-data.mjs admin-workflows.mjs admin-finance.mjs account-controls.mjs account-platform.mjs sponsored-sync.mjs performance-reports.mjs operations.mjs operations-cli.mjs ./
+COPY --chown=node:node server.mjs backend.mjs password-recovery.mjs passwords.mjs two-factor.mjs sessions.mjs delivery.mjs certificates.mjs contracts.mjs market-data.mjs live-quotes.mjs support.mjs support-ai.mjs support-admin.mjs leaderboard.mjs admin.mjs admin-access.mjs admin-cli.mjs admin-data.mjs admin-workflows.mjs admin-finance.mjs account-controls.mjs account-platform.mjs sponsored-sync.mjs performance-reports.mjs operations.mjs operational-health.mjs operations-cli.mjs ./
 COPY --from=build --chown=node:node /app/public ./public
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
