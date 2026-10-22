@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Your Fundraiser Academy performance: recorded equity observations, monthly results, drawdown, and consistency analysis.">
+  <meta name="theme-color" content="#0b0b0b"><title>Performance reports | Fundraiser Academy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css"><script type="module" src="/performance.js"></script>
+</head>
+<body class="min-h-screen">
+  <a href="#performance-main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-lime focus:px-4 focus:py-2 focus:text-black">Skip to your performance report</a>
+  <header class="border-b border-line"><div class="wrap flex flex-wrap items-center justify-between gap-5 py-6"><a class="brand" href="/client.html"><img class="h-auto w-48 sm:w-56" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a><div class="flex flex-wrap gap-4 text-xs"><a href="/client.html">Client dashboard</a><a href="/account-tools.html">Account controls</a><a href="/security.html">Security</a></div></div></header>
+  <main id="performance-main" class="wrap pb-16 pt-10">
+    <section class="mb-8 max-w-3xl"><p class="eyebrow mb-3 text-lime">UNDERSTAND YOUR RESULTS</p><h1 class="mb-5 text-4xl tracking-tight sm:text-5xl">Performance,<br>with <em>perspective.</em></h1><p class="text-sm text-muted">Explore recorded trading results, monthly patterns, and the consistency of your returns. Assessment records and sponsored accounts are reported separately in their own currencies.</p></section>
+    <section class="desk-card mb-6" aria-labelledby="performance-filter-heading"><h2 id="performance-filter-heading" class="mb-4 text-xl tracking-tight">Choose your report</h2>
+      <form id="performance-filters" class="grid items-end gap-4 sm:grid-cols-2 xl:grid-cols-5" method="get" action="/api/performance">
+        <div><label for="performance-source">Results source</label><select id="performance-source" name="source" class="mb-0"><option value="assessment">Current assessment</option><option value="sponsored">Sponsored account</option></select></div>
+        <div id="performance-account-field" hidden><label for="performance-account">Sponsored account</label><select id="performance-account" name="accountId" class="mb-0" disabled><option value="">Loading your accounts…</option></select></div>
+        <div><label for="performance-from">From date (UTC)</label><input id="performance-from" name="from" type="date" class="mb-0"></div>
+        <div><label for="performance-to">Through date (UTC)</label><input id="performance-to" name="to" type="date" class="mb-0"></div>
+        <button id="performance-load" class="button justify-center" type="submit">View results</button>
+      </form><p id="performance-account-status" class="mt-4 text-xs text-muted" role="status" aria-live="polite"></p>
+    </section>
+    <p id="performance-status" class="mb-5 text-sm" role="status" aria-live="polite" aria-atomic="true" tabindex="-1">Loading your performance report…</p>
+    <div id="performance-denied" class="desk-card mb-6" hidden><h2 class="mb-3 text-2xl tracking-tight">Your records are private.</h2><p id="performance-denied-message" class="text-sm text-muted"></p><a href="/login.html" class="desk-action mt-5 inline-block">Log in again</a></div>
+    <div id="performance-report" class="space-y-6" hidden>
+      <section class="desk-card" aria-labelledby="performance-coverage-heading"><div class="flex flex-wrap items-start justify-between gap-3"><div><p class="eyebrow mb-2 text-lime">REPORT COVERAGE</p><h2 id="performance-report-title" class="mb-3 text-2xl tracking-tight">Your trading results</h2></div><span id="performance-coverage-badge" class="rounded-full border border-line px-3 py-1 text-xs"></span></div><h3 id="performance-coverage-heading" class="sr-only">What these records cover</h3><p id="performance-report-range" class="text-xs text-muted"></p><p id="performance-sync" class="mt-3 text-xs text-muted" hidden></p><ul id="performance-warnings" class="mt-4 space-y-2 text-sm text-muted"></ul></section>
+      <section id="performance-summary" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Recorded trading summary"></section>
+      <div class="grid items-start gap-6 xl:grid-cols-2"><section class="desk-card min-w-0" aria-labelledby="performance-equity-heading"><h2 id="performance-equity-heading" class="mb-3 text-2xl tracking-tight">Observed equity</h2><p class="mb-4 text-xs text-muted">Includes the marked value of open positions at recorded observations.</p><div id="performance-equity-chart"></div></section><section class="desk-card min-w-0" aria-labelledby="performance-balance-heading"><h2 id="performance-balance-heading" class="mb-3 text-2xl tracking-tight">Balance history</h2><p id="performance-balance-description" class="mb-4 text-xs text-muted"></p><div id="performance-balance-chart"></div></section></div>
+      <section class="desk-card" aria-labelledby="performance-drawdown-heading"><h2 id="performance-drawdown-heading" class="mb-3 text-2xl tracking-tight">Drawdown in recorded samples</h2><p class="mb-5 text-xs text-muted">Unrecorded movements between samples may be larger. These report statistics do not replace the assessment’s live risk limits.</p><div id="performance-drawdowns" class="grid gap-5 sm:grid-cols-3"></div><p id="performance-cashflow-note" class="mt-5 border-t border-line pt-4 text-xs text-muted"></p></section>
+      <section class="desk-card" aria-labelledby="performance-monthly-heading"><div class="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h2 id="performance-monthly-heading" class="mb-3 text-2xl tracking-tight">Monthly results</h2><p class="text-xs text-muted">Trading profit and external cash flows are separate. Months without recorded activity are omitted.</p></div></div><div id="performance-monthly"></div><p id="performance-monthly-note" class="mt-4 text-xs text-muted"></p></section>
+      <div class="grid items-start gap-6 xl:grid-cols-2"><section class="desk-card" aria-labelledby="performance-consistency-heading"><h2 id="performance-consistency-heading" class="mb-4 text-2xl tracking-tight">Consistency and concentration</h2><dl id="performance-consistency" class="grid grid-cols-2 gap-5"></dl><p id="performance-consistency-note" class="mt-5 border-t border-line pt-4 text-xs text-muted"></p></section><section class="desk-card min-w-0" aria-labelledby="performance-daily-heading"><h2 id="performance-daily-heading" class="mb-3 text-2xl tracking-tight">Recent recorded days</h2><p class="mb-5 text-xs text-muted">The most recent 31 days with recorded activity in this report.</p><div id="performance-daily"></div></section></div>
+      <p id="performance-generated" class="text-xs text-muted"></p>
+    </div>
+    <noscript><p class="desk-card text-sm text-muted">Enable JavaScript to load your private performance report.</p></noscript>
+  </main>
+  <footer class="wrap"><div class="footer-bottom border-t border-line pt-6"><span>© <span id="performance-year">2026</span> Fundraiser Academy</span><a href="/privacy.html" class="underline underline-offset-4">Privacy</a></div></footer>
+</body>
+</html>

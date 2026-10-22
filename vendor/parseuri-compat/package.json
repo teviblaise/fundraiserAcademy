@@ -1,0 +1,9 @@
+{
+  "name": "@fundraiser-academy/parseuri-compat",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Native URL compatibility adapter for the academy's Socket.IO 2 / Engine.IO 3 client",
+  "type": "commonjs",
+  "main": "index.cjs"
+}

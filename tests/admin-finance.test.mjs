@@ -194,6 +194,126 @@ test('finance list search, filters and pagination are bounded and parameterized'
   }finally{app.close();}
 });
 
+test('a trader requests only their own earned share with a private status history and no financial staff privileges',()=>{
+  const app=fixture();
+  try{
+    const account=app.create({traderShareBps:5000});app.statement(account.id);
+    assert.throws(()=>app.access.require(2,'finance.write'),e=>e.status===403);
+    const result=app.finance.createClientPayout(2,{accountId:account.id,amountCents:3000,idempotencyKey:randomUUID()});
+    assert.equal(result.reused,false);assert.equal(result.payout.status,'requested');assert.equal(result.payout.requestOrigin,'trader');assert.equal(result.account.availableCents,2000);assert.equal(result.payout.transfersMoney,false);
+    assert.deepEqual(result.payout.history.map(x=>x.status),['requested']);
+    assert.doesNotMatch(JSON.stringify(result),/evidence|externalReference|createdBy|updatedBy|actorId|Operator|owner@example|trader@example|request_key_hash/);
+    const audit=app.access.auditList({action:'finance.payout-requested'}).entries[0];assert.equal(audit.actorId,2);assert.equal(audit.detail.source,'client-dashboard');
+    assert.throws(()=>app.finance.createClientPayout(3,{accountId:account.id,amountCents:1,idempotencyKey:randomUUID()}),e=>e.status===404);
+    assert.throws(()=>app.finance.createClientPayout(2,{accountId:account.id,amountCents:2001,idempotencyKey:randomUUID()}),e=>e.status===409&&e.code==='PAYOUT_BALANCE_EXCEEDED');
+  }finally{app.close();}
+});
+
+test('client request retries are idempotent even after approval and payment, and reuse cannot change the request',()=>{
+  const app=fixture();
+  try{
+    const account=app.create({traderShareBps:10000});app.statement(account.id);
+    const input={accountId:account.id,amountCents:1000,idempotencyKey:randomUUID()};
+    const first=app.finance.createClientPayout(2,input),again=app.finance.createClientPayout(2,input);
+    assert.equal(again.reused,true);assert.equal(again.payout.id,first.payout.id);assert.equal(again.account.reservedCents,1000);assert.equal(app.finance.payouts().total,1);
+    assert.throws(()=>app.finance.createClientPayout(2,{...input,amountCents:999}),e=>e.status===409&&e.code==='PAYOUT_REQUEST_CONFLICT');
+    const other=app.create({label:'Separate allocation'});app.statement(other.id);
+    assert.throws(()=>app.finance.createClientPayout(2,{...input,accountId:other.id}),e=>e.status===409);
+    app.advance(1000);app.finance.updatePayout(1,first.payout.id,{status:'approved',revision:1,reason:'Approve trader settlement request.'});
+    app.advance(1000);app.finance.updatePayout(1,first.payout.id,{status:'paid',revision:2,externalPaymentReference:'client-request-transfer',reason:'Record independently completed transfer.'});
+    const paid=app.finance.createClientPayout(2,input);assert.equal(paid.reused,true);assert.equal(paid.payout.status,'paid');assert.equal(paid.account.paidCents,1000);assert.equal(paid.account.reservedCents,0);
+    assert.deepEqual(paid.payout.history.map(x=>x.status),['requested','approved','paid']);
+    assert.ok(paid.payout.history.every(event=>!Object.hasOwn(event,'reason')&&!Object.hasOwn(event,'actorId')));
+    assert.equal(app.access.auditList({action:'finance.payout-requested'}).total,1,'a retry is not another financial request');
+    const stored=app.db.prepare('SELECT request_key_hash FROM sponsored_client_payout_requests').get().request_key_hash;assert.match(stored,/^[a-f0-9]{64}$/);assert.notEqual(stored,input.idempotencyKey);
+  }finally{app.close();}
+});
+
+test('client requests fail closed for unconfirmed, suspended and deleted accounts while pending closure can settle owed money',()=>{
+  const app=fixture();
+  try{
+    const account=app.create({traderShareBps:10000});app.statement(account.id);
+    const request=()=>app.finance.createClientPayout(2,{accountId:account.id,amountCents:100,idempotencyKey:randomUUID()});
+    app.db.prepare('UPDATE notification_preferences SET verified=0 WHERE user_id=2').run();assert.throws(request,e=>e.status===403&&e.code==='EMAIL_CONFIRMATION_REQUIRED');
+    app.db.prepare('UPDATE notification_preferences SET verified=1 WHERE user_id=2').run();
+    app.db.prepare("INSERT INTO admin_account_status VALUES(2,'suspended','Account review',1,?)").run(Date.now());assert.throws(request,e=>e.status===403&&e.code==='ACCOUNT_SUSPENDED');
+    app.db.prepare('DELETE FROM admin_account_status WHERE user_id=2').run();
+    app.db.exec("CREATE TABLE account_deletions(user_id INTEGER PRIMARY KEY,status TEXT);INSERT INTO account_deletions VALUES(2,'deleted');");assert.throws(request,e=>e.status===403&&e.code==='ACCOUNT_DELETED');
+    app.db.prepare("UPDATE account_deletions SET status='pending_closure' WHERE user_id=2").run();assert.equal(request().payout.status,'requested');
+    assert.equal(app.finance.payouts().total,1);
+  }finally{app.close();}
+});
+
+test('client payout payloads reject unsafe values, unbounded keys, protected fields, and unsupported account identifiers',()=>{
+  const app=fixture();
+  try{
+    const account=app.create();app.statement(account.id);
+    const input={accountId:account.id,amountCents:1,idempotencyKey:randomUUID()};
+    for(const extra of [{amountCents:0},{amountCents:-1},{amountCents:0.5},{amountCents:Infinity},{amountCents:Number.MAX_SAFE_INTEGER},{idempotencyKey:undefined},{idempotencyKey:'short'},{idempotencyKey:'x'.repeat(129)},{idempotencyKey:'a'.repeat(16)+'\n'},{idempotencyKey:'💰'.repeat(16)},{userId:3},{reason:'Pretend administrator'},{status:'approved'},{password:'not accepted here'},{accountId:'../../other'}])assert.throws(()=>app.finance.createClientPayout(2,{...input,...extra}),e=>e.status===400);
+    assert.throws(()=>app.finance.createClientPayout('2 OR 1=1',input),e=>e.status===400);
+    assert.throws(()=>app.finance.createClientPayout(999,input),e=>e.status===401);
+    assert.equal(app.finance.payouts().total,0);
+  }finally{app.close();}
+});
+
+test('client reservations and request keys roll back atomically with an audit failure or outer authentication transaction',()=>{
+  const app=fixture();
+  try{
+    const account=app.create();app.statement(account.id);
+    const input={accountId:account.id,amountCents:100,idempotencyKey:randomUUID()};
+    app.setAuditFailure(true);assert.throws(()=>app.finance.createClientPayout(2,input),/audit write failed/);
+    assert.equal(app.finance.payouts().total,0);assert.equal(app.db.prepare('SELECT count(*) n FROM sponsored_client_payout_requests').get().n,0);
+    app.setAuditFailure(false);app.db.exec('BEGIN IMMEDIATE');app.finance.createClientPayout(2,input);app.db.exec('ROLLBACK');
+    assert.equal(app.finance.payouts().total,0);assert.equal(app.db.prepare('SELECT count(*) n FROM sponsored_client_payout_requests').get().n,0);
+    assert.equal(app.access.auditList({action:'finance.payout-requested'}).total,0);
+    assert.equal(app.finance.createClientPayout(2,input).reused,false);
+    assert.throws(()=>app.db.prepare('DELETE FROM sponsored_client_payout_requests').run(),/immutable/);
+  }finally{app.close();}
+});
+
+test('closed allocations keep owed client earnings payable and client payment history never reveals staff reasons',()=>{
+  const app=fixture();
+  try{
+    const account=app.create();app.statement(account.id);app.finance.updateAccount(1,account.id,{status:'closed',revision:1,reason:'Allocation concluded externally.'});
+    const payout=app.finance.createClientPayout(2,{accountId:account.id,amountCents:100,idempotencyKey:randomUUID()}).payout;
+    app.advance(1000);app.finance.updatePayout(1,payout.id,{status:'rejected',revision:1,reason:'Private reviewer evidence, do not expose.'});
+    const client=app.finance.clientView(2);assert.equal(client.accounts[0].status,'closed');assert.equal(client.accounts[0].availableCents,3333);assert.deepEqual(client.payouts[0].history.map(x=>x.status),['requested','rejected']);assert.doesNotMatch(JSON.stringify(client),/Private reviewer|actorId|reason/);
+    const admin=app.finance.payouts().payouts[0];assert.match(admin.history[1].reason,/Private reviewer/);assert.equal(admin.requestOrigin,'trader');
+  }finally{app.close();}
+});
+
+test('payment history follows the actual status transitions when every event shares a timestamp',()=>{
+  const app=fixture();
+  try{
+    const account=app.create();app.statement(account.id);
+    const payout=app.finance.createClientPayout(2,{accountId:account.id,amountCents:100,idempotencyKey:randomUUID()}).payout;
+    app.finance.updatePayout(1,payout.id,{status:'approved',revision:1,reason:'Approval in same clock tick.'});
+    app.finance.updatePayout(1,payout.id,{status:'paid',revision:2,externalPaymentReference:'same-tick-transfer',reason:'Payment recording in same clock tick.'});
+    const history=app.finance.clientView(2).payouts[0].history;
+    assert.deepEqual(history.map(event=>event.status),['requested','approved','paid']);assert.equal(new Set(history.map(event=>event.createdAt)).size,1);
+  }finally{app.close();}
+});
+
+test('competing client request retries reserve once and distinct requests cannot overspend the same share',async()=>{
+  async function compete(sameKey){
+    const folder=await mkdtemp(path.join(tmpdir(),'fa-client-payout-race-')),filename=path.join(folder,'academy.sqlite');
+    const app=fixture(filename);let workers=[];
+    try{
+      const account=app.create({traderShareBps:10000});app.statement(account.id,{netProfitCents:10000});
+      const sharedKey=randomUUID();
+      const workerSource=`const {parentPort,workerData}=require('node:worker_threads');const {DatabaseSync}=require('node:sqlite');(async()=>{const {createAdminFinance}=await import(workerData.module);const db=new DatabaseSync(workerData.filename);db.exec('PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000');const finance=createAdminFinance(db,{access:{require(){throw new Error('Client must not require administrator privileges')},audit(){}},workflows:{requireApproved(){throw new Error('not used')}},now:()=>Date.UTC(2026,9,25)});parentPort.postMessage({ready:true});parentPort.once('message',()=>{try{const result=finance.createClientPayout(2,{accountId:workerData.accountId,amountCents:6000,idempotencyKey:workerData.key});parentPort.postMessage({status:200,payoutId:result.payout.id,reused:result.reused});}catch(error){parentPort.postMessage({status:error.status||500,message:error.message});}finally{db.close();parentPort.close();}});})().catch(error=>{parentPort.postMessage({error:error.message});parentPort.close()});`;
+      workers=Array.from({length:2},()=>new Worker(workerSource,{eval:true,workerData:{module:new URL('../admin-finance.mjs',import.meta.url).href,filename,accountId:account.id,key:sameKey?sharedKey:randomUUID()}}));
+      await Promise.all(workers.map(worker=>new Promise((resolve,reject)=>{worker.once('message',message=>message.ready?resolve():reject(new Error(message.error||'Worker did not initialize')));worker.once('error',reject);})));
+      const pending=workers.map(worker=>new Promise((resolve,reject)=>{worker.once('message',resolve);worker.once('error',reject);}));workers.forEach(worker=>worker.postMessage('request'));
+      const results=await Promise.all(pending);
+      assert.deepEqual(results.map(result=>result.status).sort(),sameKey?[200,200]:[200,409]);
+      if(sameKey){assert.equal(results[0].payoutId,results[1].payoutId);assert.deepEqual(results.map(result=>result.reused).sort(),[false,true]);}
+      assert.equal(app.finance.payouts().total,1);assert.equal(app.finance.accountDetail(account.id).account.reservedCents,6000);assert.equal(app.finance.accountDetail(account.id).account.availableCents,4000);
+    }finally{await Promise.all(workers.map(worker=>worker.terminate()));app.close();await rm(folder,{recursive:true,force:true});}
+  }
+  await compete(true);await compete(false);
+});
+
 test('separate SQLite writers cannot reserve the same available share twice',async()=>{
   const folder=await mkdtemp(path.join(tmpdir(),'fa-finance-race-')),filename=path.join(folder,'academy.sqlite');
   const app=fixture(filename);let workers=[];

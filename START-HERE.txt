@@ -59,15 +59,19 @@ codes before leaving the page.
 Password recovery keeps two-factor authentication enabled. Use a fresh app code
 for each security change or a different unused recovery code.
 
-Your private data folder includes two-factor-key.json. Keep the folder private
-and back it up with the database; the key must stay with existing encrypted
-authenticator records. This download never includes another installation's keys.
+Your private data folder includes two-factor-key.json and a separately generated
+backup-key.json unless stable encryption keys are directly configured. Keep both
+private and preserve the required keys for their existing records/artifacts.
+The backup encryption key needs a separate secure copy; it is deliberately not
+inside the backup it decrypts. This download never includes another installation's keys.
 
 STAFF AND ADMINISTRATION
 
 The admin dashboard is /admin.html. It includes trader and assessment review,
 certificates, agreement publication, sponsorship decisions, sponsored-account
-and payout records, support, reports, staff roles, audit history, and system status.
+and payout records, MetaTrader connections, performance analysis, account-closure
+requests, backup/error operations, support, reports, staff roles, audit history,
+and system status.
 
 Set ADMIN_OWNER_EMAILS in the application server's environment to the exact
 registered owner email. Register normally, confirm that email using the configured
@@ -88,3 +92,64 @@ accounts or send money. Your client dashboard shows your own review message and
 recorded accounts and payouts; internal notes remain private to authorized staff.
 Back up the database and private keys together on persistent storage. The free
 Render preview cannot preserve lasting account, agreement, or financial records.
+
+
+ACCOUNT CONTROLS AND PAYOUTS
+
+Open /account-tools.html from the client dashboard or Security. You can download
+your complete paginated personal-data export, request account closure, and request
+a payout from your unreserved recorded earned share. Each action needs a separate
+password confirmation and a fresh second factor when enabled. Confirmation lasts
+five minutes for that session and action. Keep the same payout request key when
+retrying an uncertain request; the website handles this to avoid duplicate holds.
+Payout approval and recorded payment history do not send a bank transfer.
+
+Account closure requires typing DELETE MY ACCOUNT. Staff roles, open sponsored
+allocations, pending payouts, or unsettled earned shares keep it pending so you can
+resolve them; a pending request can be cancelled. Completed closure signs out all
+devices, removes mutable operational personal data, and returns a retention
+receipt. Immutable agreements, financial records, review/audit history, and older
+backup copies may remain as disclosed. This does not claim that every personal
+datum has been erased. Save the receipt and apply the company's retention policy.
+
+METATRADER CONNECTIONS AND PERFORMANCE
+
+MetaTrader 4/5 synchronization uses MetaApi. Set METAAPI_API_TOKEN privately on
+the actual application server; on Render this is separate from Codex settings.
+Create/deploy the permitted connection in MetaApi, then link its existing account
+ID to the approved academy sponsored record in the admin console. Never enter a
+broker password or API key into that form or chat. The website reads performance;
+it does not provision accounts, trade, purchase accounts, or transfer money.
+
+Choose the history start deliberately (default: the previous 30 days). The server
+checks active links roughly every 60 seconds while running. Missing credentials,
+stale observations, and partial history are shown rather than replaced with demo
+results. Broker currency remains native, and deposits are not trading profit.
+Staff must reconcile actual settlements before posting profit statements or
+payout earnings to the separate financial ledger.
+
+Open /performance.html for observed equity, realized balance, monthly results,
+drawdown, and consistency. Marked equity starts when actual observations exist;
+the site does not invent older equity. Read history/currency/fee coverage notes.
+MetaTrader closing fills may include partial closes, so their win rate is not a
+round-trip-position win rate. Consistency statistics add no new challenge rules.
+
+BACKUPS AND RECOVERY CHECKS
+
+The running server schedules encrypted local SQLite backups, initially after about
+30 seconds, then by default every 24 hours with seven artifacts retained by count.
+Operations & recovery shows sanitized errors, job history, and isolated recovery
+checks. Defaults can be changed with BACKUP_DIRECTORY, BACKUP_INTERVAL_HOURS,
+and BACKUP_RETENTION_COUNT. Preserve the separate backup encryption key.
+
+Local backups are not offsite backups. Use persistent private storage and a
+separate operator-managed offsite process before relying on real records. Losing
+an ephemeral Render instance can lose its database, backup files, and keys together.
+
+Trusted operators can run npm run operations -- status, backup, or verify.
+The restore command writes only to a NEW directory and requires the healthy
+current database and latest deletion ledger. It never replaces the running
+database and is not complete recovery after losing the database or host. Restored
+accounts require password resets; old sessions, tokens, and recovery codes are
+revoked, while authenticator protection stays enabled with its original key.
+See DEPLOYMENT.md for exact commands, requirements, and recovery limitations.

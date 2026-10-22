@@ -173,5 +173,5 @@ export function createAdminConsole(db, { access, sessions, twoFactor, contracts,
     if(revoked!==null) closeRevokedStreams(revoked,'Your account access changed. Please sign in again.');
     respond(res,200,result);return true;
   }
-  return { handle, clientView, data, finance, workflows };
+  return { handle, clientView, data, finance, workflows, privileged };
 }

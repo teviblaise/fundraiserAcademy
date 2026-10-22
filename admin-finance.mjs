@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export class AdminFinanceError extends Error {
   constructor(status, message, code) { super(message); this.status = status; if (code) this.code = code; }
@@ -77,6 +77,11 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     CREATE TABLE IF NOT EXISTS sponsored_payout_events (
     id TEXT PRIMARY KEY, payout_id TEXT NOT NULL REFERENCES sponsored_payouts(id), actor_user_id INTEGER NOT NULL REFERENCES users(id),
     previous_status TEXT, status TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS sponsored_client_payout_requests (
+    user_id INTEGER NOT NULL REFERENCES users(id), request_key_hash TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES sponsored_accounts(id), amount_cents INTEGER NOT NULL,
+    payout_id TEXT NOT NULL UNIQUE REFERENCES sponsored_payouts(id), created_at INTEGER NOT NULL,
+    PRIMARY KEY(user_id,request_key_hash));
     CREATE TRIGGER IF NOT EXISTS sponsored_account_terms_immutable BEFORE UPDATE ON sponsored_accounts
     WHEN NEW.id IS NOT OLD.id OR NEW.user_id IS NOT OLD.user_id OR NEW.firm_name IS NOT OLD.firm_name OR NEW.label IS NOT OLD.label
       OR NEW.label_key IS NOT OLD.label_key OR NEW.account_size_cents IS NOT OLD.account_size_cents OR NEW.trader_share_bps IS NOT OLD.trader_share_bps
@@ -101,12 +106,25 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     CREATE TRIGGER IF NOT EXISTS sponsored_payout_events_no_update BEFORE UPDATE ON sponsored_payout_events
       BEGIN SELECT RAISE(ABORT,'Payout history is immutable'); END;
     CREATE TRIGGER IF NOT EXISTS sponsored_payout_events_no_delete BEFORE DELETE ON sponsored_payout_events
-      BEGIN SELECT RAISE(ABORT,'Payout history is immutable'); END;`);
+      BEGIN SELECT RAISE(ABORT,'Payout history is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS sponsored_client_payout_requests_no_update BEFORE UPDATE ON sponsored_client_payout_requests
+      BEGIN SELECT RAISE(ABORT,'Client payout requests are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS sponsored_client_payout_requests_no_delete BEFORE DELETE ON sponsored_client_payout_requests
+      BEGIN SELECT RAISE(ABORT,'Client payout requests are immutable'); END;`);
 
-  function transaction(actorId, work) {
-    db.exec('BEGIN IMMEDIATE');
-    try { access.require(actorId, 'finance.write'); const result = work(); db.exec('COMMIT'); return result; }
-    catch (error) { db.exec('ROLLBACK'); if (error.code?.includes('CONSTRAINT') || /UNIQUE constraint failed/.test(error.message)) fail(409, 'That external reference or account label has already been recorded.'); throw error; }
+  function transaction(actorId, work, { client = false } = {}) {
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec('BEGIN IMMEDIATE');
+    try { if (client) requireClient(actorId); else access.require(actorId, 'finance.write'); const result = work(); if (ownsTransaction) db.exec('COMMIT'); return result; }
+    catch (error) { if (ownsTransaction) db.exec('ROLLBACK'); if (error.code?.includes('CONSTRAINT') || /UNIQUE constraint failed/.test(error.message)) fail(409, 'That external reference, account label, or payout request has already been recorded.'); throw error; }
+  }
+  function requireClient(userId) {
+    const target = integer(userId, 'Trader ID', 1, Number.MAX_SAFE_INTEGER);
+    if (!db.prepare('SELECT 1 FROM users WHERE id=?').get(target)) fail(401, 'Sign in again to request a payout.');
+    if (!db.prepare('SELECT 1 FROM notification_preferences WHERE user_id=? AND verified=1').get(target)) fail(403, 'Confirm your account email before requesting a payout.', 'EMAIL_CONFIRMATION_REQUIRED');
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='admin_account_status'").get() && db.prepare("SELECT 1 FROM admin_account_status WHERE user_id=? AND status='suspended'").get(target)) fail(403, 'This account is suspended. Contact academy support to review outstanding payments.', 'ACCOUNT_SUSPENDED');
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_deletions'").get() && db.prepare("SELECT 1 FROM account_deletions WHERE user_id=? AND status='deleted'").get(target)) fail(403, 'This account has been deleted.', 'ACCOUNT_DELETED');
+    return target;
   }
   function accountRow(accountId) {
     const row = db.prepare('SELECT a.*,u.name AS trader_name,u.email AS trader_email FROM sponsored_accounts a JOIN users u ON u.id=a.user_id WHERE a.id=?').get(id(accountId, 'sponsored account'));
@@ -147,9 +165,11 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     return row;
   }
   function payoutView(row, { client = false } = {}) {
+    const requestOrigin = db.prepare('SELECT 1 FROM sponsored_client_payout_requests WHERE payout_id=?').get(row.id) ? 'trader' : 'staff';
+    const history = db.prepare("SELECT id,actor_user_id,previous_status,status,reason,created_at FROM sponsored_payout_events WHERE payout_id=? ORDER BY CASE WHEN previous_status IS NULL THEN 0 WHEN previous_status='requested' THEN 1 WHEN previous_status='approved' THEN 2 ELSE 3 END,created_at,id LIMIT 20").all(row.id).map(event => ({ id:event.id,previousStatus:event.previous_status,status:event.status,createdAt:event.created_at,...(!client ? {actorId:event.actor_user_id,reason:event.reason} : {}) }));
     const result = { id: row.id, accountId: row.account_id, userId: row.user_id, firmName: row.firm_name, label: row.label, amountCents: row.amount_cents,
       currency: row.currency, status: row.status, revision: row.revision, paidAt: row.paid_at, createdAt: row.created_at, updatedAt: row.updated_at,
-      source: 'manual_external_payment_record', transfersMoney: false };
+      source: 'manual_external_payment_record', requestOrigin, history, transfersMoney: false };
     if (!client) Object.assign(result, { traderName: row.trader_name, traderEmail: row.trader_email, externalPaymentReference: row.external_payment_reference });
     return result;
   }
@@ -253,6 +273,31 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
       return { payout: payoutView(payoutRow(payoutId)), account: accountView(accountRow(row.id)) };
     });
   }
+  function createClientPayout(userId, data) {
+    unknownKeys(data, ['accountId','amountCents','idempotencyKey']);
+    const target = integer(userId, 'Trader ID', 1, Number.MAX_SAFE_INTEGER);
+    const accountId = id(data.accountId, 'sponsored account'), amount = integer(data.amountCents, 'Payout amount in cents', 1, maxMoney);
+    if (typeof data.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{16,128}$/.test(data.idempotencyKey)) fail(400, 'Provide a unique payout request key with 16–128 letters, digits, dots, underscores, colons, or hyphens.');
+    const keyHash = createHash('sha256').update(data.idempotencyKey).digest('hex');
+    return transaction(target, () => {
+      // Scope the first account lookup to its owner. A valid UUID must not reveal
+      // another trader's balance, firm, label, or request history.
+      const row = db.prepare('SELECT * FROM sponsored_accounts WHERE id=? AND user_id=?').get(accountId,target);
+      if (!row) fail(404, 'Sponsored account not found.');
+      const existing = db.prepare('SELECT * FROM sponsored_client_payout_requests WHERE user_id=? AND request_key_hash=?').get(target,keyHash);
+      if (existing) {
+        if (existing.account_id !== row.id || existing.amount_cents !== amount) fail(409, 'This payout request key was already used for different details.', 'PAYOUT_REQUEST_CONFLICT');
+        return {payout:payoutView(payoutRow(existing.payout_id),{client:true}),account:accountView(row,{client:true}),reused:true};
+      }
+      if (balance(row.id).availableCents < amount) fail(409, 'The payout exceeds your unreserved recorded earned share.', 'PAYOUT_BALANCE_EXCEEDED');
+      const payoutId = randomUUID(), time = now(), why = 'Trader requested payment of their recorded earned share.';
+      db.prepare("INSERT INTO sponsored_payouts(id,account_id,user_id,amount_cents,status,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,'requested',?,?,?,?)").run(payoutId,row.id,target,amount,target,target,time,time);
+      db.prepare('INSERT INTO sponsored_client_payout_requests(user_id,request_key_hash,account_id,amount_cents,payout_id,created_at) VALUES (?,?,?,?,?,?)').run(target,keyHash,row.id,amount,payoutId,time);
+      payoutEvent(target,payoutId,null,'requested',why);
+      access.audit(target,'finance.payout-requested',{targetId:target,reason:why,detail:{accountId:row.id,payoutId,amountCents:amount,currency:'USD',status:'requested',source:'client-dashboard'}});
+      return {payout:payoutView(payoutRow(payoutId),{client:true}),account:accountView(row,{client:true}),reused:false};
+    },{client:true});
+  }
   function updatePayout(actorId, payoutId, data) {
     unknownKeys(data, ['status','revision','externalPaymentReference','paidAt','reason']);
     if (!['approved','paid','rejected'].includes(data.status)) fail(400, 'Select approved, paid, or rejected.');
@@ -287,5 +332,5 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     for (const row of db.prepare("SELECT amount_cents,status FROM sponsored_payouts WHERE status!='rejected'").all()) {if(row.status==='paid')paid+=BigInt(row.amount_cents);else reserved+=BigInt(row.amount_cents);}
     return { accounts:accountCounts,payouts:Object.fromEntries(payoutStatuses.map(status=>[status,db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE status=?').get(status).total])),netProfitCents:safeNumber(net,'Portfolio net profit'),earnedCents:safeNumber(earned,'Portfolio earned share'),reservedCents:safeNumber(reserved,'Portfolio reservations'),paidCents:safeNumber(paid,'Portfolio payments'),availableCents:safeNumber(earned-reserved-paid,'Portfolio available share'),currency:'USD',source:recordSource,transfersMoney:false };
   }
-  return { accounts,accountDetail,createAccount,updateAccount,recordStatement,payouts,createPayout,updatePayout,clientView,summary };
+  return { accounts,accountDetail,createAccount,updateAccount,recordStatement,payouts,createPayout,createClientPayout,updatePayout,clientView,summary };
 }

@@ -29,3 +29,11 @@ services:
       # This does not create an account or bypass either security prerequisite.
       - key: ADMIN_OWNER_EMAILS
         sync: false
+      # Optional read-only synchronization of existing MetaApi accounts.
+      # Existing Render services add the actual token in Environment separately.
+      - key: METAAPI_API_TOKEN
+        sync: false
+      - key: BACKUP_INTERVAL_HOURS
+        value: "24"
+      - key: BACKUP_RETENTION_COUNT
+        value: "7"

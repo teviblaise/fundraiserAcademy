@@ -16,6 +16,7 @@ import {createSessions,sessionPolicy} from './sessions.mjs';
 import QRCode from 'qrcode';
 import {createAdminAccess} from './admin-access.mjs';
 import {createAdminConsole} from './admin.mjs';
+import {createAccountPlatform} from './account-platform.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
@@ -51,7 +52,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, platformOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -105,6 +106,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     onCommitReset(id) {
       sessions.bumpVersion(id);
       twoFactor.invalidateAuthentication(id);
+      db.prepare('UPDATE users SET recovery_required=0 WHERE id=?').run(id);
     },
     onReset(id) {
       for (const connection of [...(streams.get(id) ?? [])]) endStream(connection, 'auth-expired', { error: 'Your password was changed. Please log in again.' });
@@ -156,6 +158,8 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     return profileView(found.user);
   }
   function assertActive(id) {
+    if(platform.controls.isDeleted(id))throw new RequestError(401,'This account has been closed.','ACCOUNT_DELETED');
+    if(db.prepare('SELECT recovery_required FROM users WHERE id=?').get(id)?.recovery_required)throw new RequestError(403,'Recover your password before signing in after a system restore.','RECOVERY_REQUIRED');
     if(adminAccess.isSuspended(id)) throw new RequestError(403,'This account is suspended. Contact academy support for an account review.','ACCOUNT_SUSPENDED');
   }
   function newSession(req, id, expectedVersion) {
@@ -233,9 +237,11 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           {name:'Crypto reference prices',configured:true,status:stream?.connected?'stream_connected':'REST_fallback',description:'Public Coinbase prices; source freshness still controls simulated fills.'},
           {name:'Generative support',configured:Boolean(process.env.SUPPORT_AI_API_KEY),status:process.env.SUPPORT_AI_API_KEY?'configured':'academy_guide',description:'Company guide remains available without AI credentials.'},
           {name:'Sponsored-account and payment integrations',configured:false,status:'manual_records',description:'Account, statement, and payout records are entered by authorized staff. No external account issuance or money transfer is performed.'}],
-        storage:{durability:'Keep the private database directory on persistent operator-managed storage.',backups:'No automated backup service is configured. Back up the database and private authentication keys together.'},
+        storage:{durability:'Keep the private database directory on persistent operator-managed storage.',backups:'Encrypted scheduled backups and isolated recovery checks are available in Operations. Preserve the separate backup encryption key and copy backups off this server.'},
         outbox:{pending:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status IN ('pending','sending')").get().n,failed:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status='failed'").get().n}};
     }});
+  const platform=createAccountPlatform(db,databasePath,{admin:adminConsole,access:adminAccess,sessions,twoFactor,
+    user,sessionHash,reauthenticate,body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,now,options:platformOptions});
   const revision = state => Number.isSafeInteger(state.revision) && state.revision >= 0 ? state.revision : 0;
   const load = id => {
     const state = ensureTools(JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state));
@@ -247,14 +253,16 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     const previous = JSON.parse(db.prepare('SELECT state FROM accounts WHERE user_id=?').get(id).state);
     state.revision = revision(previous) + 1;
     state.streamEpoch = streamEpoch;
-    return db.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(state), id);
+    const result=db.prepare('UPDATE accounts SET state=? WHERE user_id=?').run(JSON.stringify(state), id);
+    if(result.changes)platform.reports.captureAssessment(id,state,now());
+    return result;
   };
   const event = (id, kind, detail) => db.prepare('INSERT INTO events(user_id,kind,detail,created_at) VALUES (?,?,?,?)').run(id, kind, JSON.stringify(detail), Date.now());
   function commit(id, state, kind, detail) {
     const previous=load(id);
     const oldNotices=new Set(previous.notifications.map(n=>`${n.createdAt}:${n.id}`));
     db.exec('BEGIN');
-    try { certificates.issue(id,state); const fresh=state.notifications.filter(n=>!oldNotices.has(`${n.createdAt}:${n.id}`)); save(id,state); event(id,kind,detail); delivery.enqueue(id,state,fresh); db.exec('COMMIT'); }
+    try { certificates.issue(id,state,now()); const fresh=state.notifications.filter(n=>!oldNotices.has(`${n.createdAt}:${n.id}`)); save(id,state); event(id,kind,detail); delivery.enqueue(id,state,fresh); db.exec('COMMIT'); }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   // Every operation that writes account state shares one queue with background fills.
@@ -281,6 +289,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     }
   }
   async function syncReferenceState(id, requestedSymbols = []) {
+    if(platform.controls.isDeleted(id))throw new RequestError(401,'This account has been closed.','ACCOUNT_DELETED');
     const before = load(id);
     // Old fills must never receive a windfall from changing their price source.
     if (before.migrationRequired) return before;
@@ -293,6 +302,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     const symbols = [...new Set(requested.flatMap(symbol=>marketDependencies(symbol)))];
     const quotes = await Promise.allSettled(symbols.map(symbol => marketData.getExecutionQuote(symbol)));
     if (stopping) throw new RequestError(503, 'The trading server is restarting. Please try again shortly.');
+    if(platform.controls.isDeleted(id))throw new RequestError(401,'This account has been closed.','ACCOUNT_DELETED');
     // Reload after the await; account mutations are serialized, while independent
     // preference changes and certificate records can still be written normally.
     const state = load(id);
@@ -546,8 +556,10 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
         session(req,res,row.id,expected.sessionVersion); respond(res,200,{user:profileView(db.prepare('SELECT * FROM users WHERE id=?').get(row.id))}); return;
       }
       const current = user(req);
+      if(await platform.handle(req,res,pathname,current))return;
+      user(req);
       if(pathname==='/api/admin'||pathname.startsWith('/api/admin/')){await adminConsole.handle(req,res,pathname,current);return;}
-      if(req.method==='GET'&&pathname==='/api/sponsorship'){respond(res,200,adminConsole.clientView(current.id));return;}
+      if(req.method==='GET'&&pathname==='/api/sponsorship'){respond(res,200,{...adminConsole.clientView(current.id),connections:platform.sponsored.clientView(current.id)});return;}
       if (pathname === '/api/security' || pathname.startsWith('/api/security/')) {
         requireOrigin(req);
         if (req.method === 'GET' && pathname === '/api/security') {
@@ -724,7 +736,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(req.method==='POST' && pathname==='/api/contract/sign'){
         limit(req,'contract-sign',20,600000);const data=await body(req);
         user(req);
-        respond(res,200,contracts.sign(current.id,data));return;
+        respond(res,200,contracts.sign(current.id,data,now()));return;
       }
       const contractPath=/^\/api\/contracts\/([a-f0-9-]{36})\/document$/.exec(pathname);
       if(req.method==='GET' && contractPath){
@@ -864,12 +876,16 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       }
       throw new RequestError(404,'API endpoint not found.');
     } catch (error) {
-      if (!error.status) console.error('API request failed:',error.message);
+      if (!error.status || error.status>=500) {
+        const incident=platform.capture(error,{route:pathname,method:req.method,status:error.status||500});
+        if(!error.status)console.error('API request failed',incident?.id||'unclassified');
+      }
       if (res.headersSent) { res.destroy(); return; }
       respond(res,error.status || 500,{error:error.status ? error.message : 'Server error. Please try again.',...((error.status && error.code) ? {code:error.code} : {})});
     }
   }
-  return { handle, close() {
+  if(autoTick)platform.start();
+  return { handle, capture:(error,metadata)=>platform.capture(error,metadata), health(){db.prepare('SELECT 1').get();return{status:stopping?'stopping':'ok'};}, close() {
     if (closePromise) return closePromise;
     stopping = true;
     if (timer) clearInterval(timer);
@@ -878,7 +894,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     for (const connections of [...streams.values()]) for (const connection of [...connections]) endStream(connection);
     marketData.close?.();
     delivery.close();
-    closePromise = Promise.allSettled([...queues.values(),...securityPending,support.close(),passwordRecovery.close(),passwords.close()]).then(() => db.close());
+    closePromise = Promise.allSettled([...queues.values(),...securityPending,support.close(),passwordRecovery.close(),passwords.close(),platform.close()]).then(() => db.close());
     return closePromise;
   } };
 }

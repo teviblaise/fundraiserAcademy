@@ -16,8 +16,9 @@ http.createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     if (pathname === '/healthz' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ status: 'ok' })); return;
+      const health=backend.health();
+      res.writeHead(health.status==='ok'?200:503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(health)); return;
     }
     if (pathname.startsWith('/api/')) { await backend.handle(req,res,pathname); return; }
     const filename = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
@@ -25,8 +26,13 @@ http.createServer(async (req, res) => {
     const resolved = await realpath(filename);
     if (!resolved.startsWith(root + path.sep)) { res.writeHead(403); res.end('Forbidden'); return; }
     const body = await readFile(resolved);
-    const recoveryPage = ['/forgot-password.html', '/reset-password.html', '/security.html', '/login.html', '/admin.html'].includes(pathname);
+    const recoveryPage = ['/forgot-password.html', '/reset-password.html', '/security.html', '/login.html', '/admin.html', '/account-tools.html', '/performance.html'].includes(pathname);
     res.writeHead(200, { 'Content-Type': types[path.extname(filename)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', ...(pathname==='/sw.js'?{'Cache-Control':'no-cache'}:{}), ...(recoveryPage ? { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" } : {}) });
     res.end(body);
-  } catch { res.writeHead(404); res.end('Not found'); }
+  } catch (error) {
+    const expected=['ENOENT','ENOTDIR'].includes(error.code)||error instanceof URIError;
+    if(!expected)backend.capture(error,{route:'/static',method:req.method,status:500});
+    if(res.headersSent){res.destroy();return;}
+    res.writeHead(expected?404:500,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});res.end(expected?'Not found':'Server error. Please try again.');
+  }
 }).listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Fundraiser Academy listening on port ' + (process.env.PORT || 3000)));

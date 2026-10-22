@@ -13,3 +13,7 @@ two-factor-key.json.*.tmp
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+backup-key.json
+backup-key.json.*.tmp
+*.fabackup
+backups

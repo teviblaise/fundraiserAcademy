@@ -1,4 +1,5 @@
 import { createAdminApi, administrativePermissions, pageRows, decimalToUnits, positiveInteger, queryString, csvDownloadName } from './admin-api.js';
+import {createAdminExtensions} from './admin-extensions.js';
 
 const $ = id => document.getElementById(id);
 const api = createAdminApi();
@@ -22,9 +23,13 @@ const sections = [
   ['contracts', 'Agreements', 'contracts.read', 'Terms & signatures', 'Publish the actual academy agreement, inspect immutable versions, and review recorded signatures.'],
   ['reviews', 'Sponsorship reviews', 'reviews.read', 'From qualification to review', 'Review eligible signed traders. An approved review records a company decision; it does not purchase or fund a prop account.'],
   ['accounts', 'Sponsored accounts', 'finance.read', 'External account records', 'Record company-sponsored accounts and their agreed terms. These are manual records of external activity.'],
+  ['connections', 'MetaTrader connections', 'finance.read', 'Verified provider observations', 'Assign an existing MetaApi account and synchronize its recorded balances and deals. Credentials stay on the server.'],
   ['payouts', 'Profits & payouts', 'finance.read', 'Manual financial ledger', 'Track recorded profit shares and external payout progress. Recording a payment does not send money.'],
   ['support', 'Customer support', 'support.manage', 'Your support queue', 'Review human handoff requests and continue the saved conversation in the support inbox.'],
   ['reports', 'Reports & exports', 'reports.export', 'Operational reporting', 'Download bounded, filtered reports. Trading valuations reflect saved reference snapshots, not a live sponsored-account feed.'],
+  ['performance', 'Performance analysis', 'reports.export', 'Recorded results over time', 'Review observed equity, realized monthly results, drawdown, and concentration with history coverage shown.'],
+  ['privacy', 'Account requests', 'traders.manage', 'Closure and retention', 'Review owner-requested account deletion and outstanding obligations. Immutable retained records are disclosed.'],
+  ['operations', 'Operations & recovery', 'system.read', 'Monitor and recover', 'Inspect errors, encrypted backups, and isolated recovery checks. Backups never replace the live database from this screen.'],
   ['staff', 'Staff & permissions', 'staff.manage', 'Controlled team access', 'Assign the minimum role needed. Every administrator must have a verified email and enabled two-factor authentication.'],
   ['audit', 'Audit trail', 'audit.read', 'Accountability', 'Inspect append-only administrative actions and the reasons recorded by staff.'],
   ['system', 'System status', 'system.read', 'Service configuration', 'See configured integrations and operating limits without exposing credentials or private storage paths.'],
@@ -369,6 +374,8 @@ async function renderSystem(epoch) {
   const grid=node('div','grid gap-6 xl:grid-cols-2');for(const [title,value]of [['Application',data.application],['Security policy',data.security],['Storage & backups',data.storage],['Operating limits',data.limits],['Transactional mail queue',data.outbox]])if(value){const area=card(title);area.append(objectDetails(value));grid.append(area);}content.append(grid,node('p','text-xs text-muted',`Configuration snapshot: ${date(data.generatedAt)}. No API keys, encryption keys, or private server paths are shown.`));
 }
 const renderers={overview:renderOverview,traders:renderTraders,assessments:epoch=>renderTraders(epoch,true),certificates:renderCertificates,contracts:renderContracts,reviews:renderReviews,accounts:renderAccounts,payouts:renderPayouts,support:renderSupport,reports:renderReports,staff:renderStaff,audit:renderAudit,system:renderSystem};
+Object.assign(renderers,createAdminExtensions({api,post,can,node,card,table,detailGrid,button,link,openAction,notify,content,
+  isCurrent:epoch=>epoch===requestEpoch,getQuery:()=>({...pageQuery}),setQuery:values=>{pageQuery={...values};},reload:()=>loadCurrent(),ensureUnlocked,date,money,cents,percent}));
 function navigate(next) {
   if(writing)return;
   const entry=sections.find(item=>item[0]===next);if(!entry||!can(entry[2]))return;

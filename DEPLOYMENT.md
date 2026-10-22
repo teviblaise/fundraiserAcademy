@@ -119,12 +119,19 @@ volume, ensure the data directory is writable by container UID 1000.
 - `DATABASE_PATH`: a file on persistent storage, not a temporary build directory.
 - `RESEND_API_KEY` and `EMAIL_FROM`: required for signup confirmation, password recovery/security notices, and opted-in alert emails.
 - `ADMIN_OWNER_EMAILS`: exact registered email address(es) for initial owner access; every owner must also confirm email and enable authenticator 2FA.
+- `METAAPI_API_TOKEN`: optional for MetaTrader 4/5 synchronization; set a real token privately on the running server before linking an existing MetaApi account.
+- `BACKUP_DIRECTORY`: optional private persistent backup directory; defaults to `backups/` beside the database.
+- `BACKUP_INTERVAL_HOURS` and `BACKUP_RETENTION_COUNT`: default to 24 hours and seven retained encrypted artifacts.
+- `BACKUP_ENCRYPTION_KEY`: optional stable, directly injected 32-byte base64 encryption key; otherwise preserve the generated private `backup-key.json` separately.
 
 Preserve the SQLite database, `two-factor-key.json`, and `vapid.json` in its private
 directory, or retain the original directly injected authenticator encryption key.
 Replacing the
 VAPID key pair invalidates existing browser push subscriptions. Back up SQLite
-using a SQLite-aware process and restrict access to database and backup files.
+using the included SQLite-aware operations service and restrict access to database
+and backup files. Keep a separate secure copy of the backup encryption key: it is
+not included inside the encrypted artifacts. A backup and its only decryption key
+on the same temporary instance do not provide disaster recovery.
 
 ## Activate the admin dashboard
 
@@ -174,9 +181,131 @@ prove that a payment took place.
 Keep the private database and keys on persistent storage before collecting lasting
 admin decisions, signatures, or financial records. The free preview remains
 ephemeral. Audit records, posted statements, and financial terms are append-only
-or immutable in the application; an operator still needs protected backups,
-retention procedures, and periodic staff-access reviews. No automated backup
-service is included.
+or immutable in the application. The included scheduled local backup service does
+not supply persistent disks, offsite storage, or a company retention policy;
+operators still need those and periodic staff-access reviews.
+
+## Connect existing MetaTrader accounts
+
+1. Confirm that the prop firm permits the intended MetaApi access arrangement.
+   Create the MetaTrader 4/5 connection in MetaApi and ensure that the existing
+   MetaApi account is deployed and synchronized there. The academy connector does
+   not provision/deploy it, request broker passwords, or send trade instructions.
+2. Add `METAAPI_API_TOKEN` as a private environment value on the actual Render
+   service, then redeploy. A Codex cloud binding does not update Render. Never
+   commit the value, enter it in a browser connection form, or paste it in chat.
+   The SDK uses HTTPS and WebSocket authentication; use the actual server-injected
+   token rather than assuming a proxy-placeholder binding will work in both.
+3. Permit outbound MetaApi HTTPS/WebSocket connections. The SDK discovers regional
+   endpoints using its provisioning service under `agiliumtrade.ai`, including
+   `mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai`, then connects to the
+   account's regional services. Keep unrelated destinations out of token bindings.
+4. Complete the academy trader's assessment, current agreement signature, and
+   approved review. Record the actual sponsored allocation and agreed profit terms
+   in the console, then use **MetaTrader connections** to assign the existing
+   MetaApi account ID and history start to that record. This ID is not an API key.
+   The default history start is the preceding 30 days; select the required period
+   deliberately because the ownership binding and start cannot be rewritten to
+   another external account or trader.
+5. Run a manual synchronization, then inspect currency, last success, history
+   coverage, deal results, and observed equity in the private performance report.
+   Compare them with the actual provider account before enabling normal use.
+
+Active links are checked approximately every 60 seconds while the server runs,
+subject to bounded jobs and provider limits. Sleeping services do not continuously
+sync. Missing credentials, timeouts, stale observations, and incomplete history
+remain visible. Provider tests with an injected mock do not validate a real token,
+provider subscription, firm permission, or live network connection.
+
+Broker currency stays native; deposits/withdrawals are not trading profit. MetaApi
+observations do not automatically post to the USD-cent financial ledger. Reconcile
+the actual external settlement and the signed sharing policy before staff enter a
+profit statement. Client payout requests reserve available recorded shares; staff
+approve/reject them and record external payment evidence. The application never
+contacts a bank or sends funds.
+
+## Account controls and performance validation
+
+Clients access `/account-tools.html` from the client dashboard or Security.
+Export, deletion, and payout requests each use a separate five-minute confirmation
+bound to the signed-in session, password, and a fresh second factor when enabled.
+Use disposable test users to verify full paginated JSON export, a retry after an
+exported record changes, idempotent payout retries, and payment-status history.
+The browser declines a partial or changed export instead of calling it complete.
+
+Test both account-closure outcomes. Open sponsored allocations, unresolved payouts,
+unsettled earnings, or staff/support roles keep the request pending and preserve
+login so obligations can be resolved; the owner can cancel it. Once eligible, the
+literal confirmation closes the usable profile, signs out devices, and removes
+mutable operational data. Keep the returned receipt: immutable agreements,
+financial records, review/audit records, and earlier backups may remain as
+explicitly disclosed. Finalize the company retention/deletion policy before
+collecting lasting customer records. Do not test deletion on a real client or
+the only owner account to prove the feature works.
+
+`/performance.html` and the admin Performance analysis section use recorded data.
+Verify monthly UTC results, fees, deposit/withdrawal classification, and native
+currency against known records. Historical closed assessment fills may produce a
+labeled realized balance curve; marked equity starts only when observations are
+captured. No unrecorded equity is reconstructed. Check coverage/staleness notices,
+closing-fill versus round-trip-position counts, and cash-flow-adjusted drawdown
+before using statistics for company decisions. Consistency statistics do not add
+new assessment rules.
+
+## Scheduled backups and recovery checks
+
+The running application schedules an initial backup after about 30 seconds and
+then defaults to a 24-hour interval, retaining seven artifacts by count. Use
+`BACKUP_INTERVAL_HOURS` and `BACKUP_RETENTION_COUNT` for supported alternatives.
+Each SQLite-consistent encrypted backup includes required authenticator and VAPID
+keys and is checked in an isolated temporary directory. SHA-256 manifest checks,
+authenticated decryption, database integrity/foreign keys, authentication-key
+checks, and replay of the current deletion ledger must succeed. The live database
+is not replaced by a check. The admin **Operations & recovery** section exposes
+sanitized error counts, backup runs, and verification results, with fresh staff
+authentication required to start a backup or check.
+
+Keep the database directory and `BACKUP_DIRECTORY` private and persistent. The
+default is local storage, with **no offsite backup destination configured**.
+Render free-preview storage can lose the database, local artifacts, and generated
+keys together. Copy verified artifacts and the latest protected deletion ledger
+through an operator-managed offsite process and preserve the encryption key
+separately; this release does not automate that external process. The backup
+key is the stable directly supplied `BACKUP_ENCRYPTION_KEY`, or a generated
+`backup-key.json` beside the database. Do not rotate or discard it while its
+artifacts remain needed. Encryption keys and live backups are excluded from Git,
+container build context, and the downloadable source ZIP.
+
+Run these commands on the trusted installation using its existing `DATABASE_PATH`:
+
+```sh
+npm run operations -- status
+npm run operations -- backup
+npm run operations -- verify
+npm run operations -- verify --backup BACKUP_UUID
+npm run operations -- restore --backup BACKUP_UUID --target /secure/new-academy-recovery --confirmation "RESTORE TO NEW DIRECTORY"
+```
+
+The CLI requires the healthy current academy database, backup registry, current
+deletion ledger, relevant artifact, and correct encryption key. A restore writes
+only to a new private target and refuses an existing directory; it never replaces
+the running database. This is fresh-copy recovery and verification, **not a
+standalone disaster-recovery tool for a lost database or host**. Plan and validate
+that separate procedure before relying on these records operationally.
+
+The recovered copy reapplies completed account deletions and reserves deleted
+user IDs so they cannot be resurrected by an older backup. It also revokes old
+sessions, recovery-code hashes, pending login/reset/confirmation tokens, push
+subscriptions, and queued notification jobs. Non-deleted accounts must complete a
+new password reset before sign-in. Enabled authenticators stay enabled, using the
+restored original encryption key. Confirm working recovery email delivery and
+retain access to the original authenticator before operator-controlled activation;
+there is no automatic 2FA bypass. Regenerate recovery codes after access is restored.
+
+Monitor failed jobs and open error fingerprints in Operations. Monitoring stores
+bounded generic categories, codes, sanitized routes, and occurrence counts, not
+raw request bodies, exception text, or credentials. External alerting, offsite
+delivery, and operational staffing remain the operator's responsibility.
 
 ## Verify after deployment
 
@@ -201,11 +330,13 @@ credentials, Git metadata, and installed dependencies. Deploying this archive
 starts with no users; migrating existing records requires a separate protected
 database/key backup and restore.
 
-Required signup confirmation, password recovery, optional email verification for
-alerts, and the admin review console are implemented. Complete privacy/retention
-policies, automated backups, account deletion, and external funded-account/payment
-integrations remain unfinished. Manual admin financial records do not supply
-those integrations; review README.md and ACADEMY_PLAYBOOK.md before public enrollment.
+Required signup confirmation, password recovery, optional alert verification,
+the admin console, account controls, payout requests, MetaApi performance reads,
+advanced reports, and encrypted local backup/recovery checks are implemented.
+Complete privacy/retention policies, persistent/offsite storage, working provider
+credentials, and payment execution are separate operator requirements. Manual
+payment confirmations do not transfer funds; review README.md and
+ACADEMY_PLAYBOOK.md before public enrollment.
 
 
 ## Customer support

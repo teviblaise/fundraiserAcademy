@@ -48,7 +48,8 @@ demo registration and a simulated trading dashboard.
 Pages: home (`index.html`), funding model (`program.html`), qualification
 (`qualification.html`), academy mission (`about.html`), questions (`faq.html`),
 demo registration (`contact.html`), privacy notice (`privacy.html`), trading
-simulator (`dashboard.html`), and client overview (`client.html`). Registration
+simulator (`dashboard.html`), client overview (`client.html`), account controls and
+payout requests (`account-tools.html`), and performance reports (`performance.html`). Registration
 collects first name, optional other names, and email, then opens the client
 dashboard. New users must confirm the one-time email link before assessment
 access. The client dashboard shows saved profile details, email status, current
@@ -62,9 +63,10 @@ log in at `login.html`. Each user has a separate practice account. Registration 
 
 The staff console at `/admin.html` includes an overview, searchable traders and
 assessment records, certificates, company agreement publication, sponsorship
-reviews, sponsored-account records, profit statements, payout records, support,
-bounded CSV reports, staff permissions, audit history, and system configuration
-status. The client dashboard shows the trader's own review message and recorded
+reviews, sponsored-account records, MetaTrader connections, profit statements,
+payout records, performance analysis, account-closure requests, backup/error
+operations, support, bounded CSV reports, staff permissions, audit history, and system
+configuration status. The client dashboard shows the trader's own review message and recorded
 sponsored accounts and payouts. Internal reviewer notes and evidence references
 are not included in the client view.
 
@@ -111,8 +113,8 @@ and signature on the exact active agreement. A changed agreement or certificate
 invalidates a stale review basis; a certificate or approval does not issue an
 external prop account.
 
-Sponsored accounts, statements, and payouts are **manual records of external
-activity**. Authorized staff must verify the external evidence, explicitly enter
+Sponsored-account allocations, profit statements, and payment confirmations are
+**records of external activity**. Authorized staff must verify the external evidence, explicitly enter
 the account size, agreed trader share, and profit-sharing policy, and bind the
 record to a current approved review. Account terms and posted statements are
 immutable. `cumulative_high_water` allocates profit only above the prior cumulative
@@ -126,9 +128,144 @@ Amounts are recorded in USD cents. Requested and approved payouts reserve the
 available recorded trader share; rejection releases it. Marking an approved payout
 paid requires an external payment reference. These controls prevent duplicate
 reservations but do not establish that evidence is genuine or a bank transfer
-occurred. The website does not purchase prop accounts, connect to a firm's funded
-account feed, or transfer money. See DEPLOYMENT.md for owner activation and
-persistent storage requirements.
+occurred. The MetaApi connector described below can read an existing approved
+account's performance; synchronized equity does not credit the payout ledger.
+The website does not purchase prop accounts or transfer money. See DEPLOYMENT.md
+for owner activation and persistent storage requirements.
+
+### Personal account controls and payout requests
+
+`/account-tools.html` lets a signed-in client export their personal records,
+request account deletion, and request a payout from their available recorded
+earnings. Each action first requires the current password and, when enabled, a
+fresh authenticator or unused recovery code. The resulting five-minute privilege
+is bound to that session and action purpose; an export confirmation cannot
+authorize a deletion or payout.
+
+The JSON personal-data export includes the client's profile and preferences,
+assessment history, certificates, signed agreement records, support conversations,
+financial records, and captured performance observations. It excludes passwords,
+authentication tokens and seeds, internal reviewer notes, staff identities, other
+clients, and private provider credentials. The browser collects all bounded pages
+and checks the export fingerprint before downloading a complete file. If the
+records change during collection, the request must be retried; partial results
+are not presented as a complete export. Browser collection is limited to 50 MB.
+
+Deletion requires typing `DELETE MY ACCOUNT`. Completed closure removes mutable
+operational personal data, replaces the usable profile with a non-login tombstone,
+revokes sessions and authentication material, disconnects the MetaApi link, and
+removes mutable trading, support, notification, and performance observations. The
+receipt lists restricted immutable agreements, financial records, review history,
+and administrative records retained for operator retention review. Earlier backup
+copies may remain until backup rotation removes them. This is account closure and
+operational-data deletion, not a claim that every personal datum has been erased;
+the company must still finalize and apply its retention policy.
+
+Staff/support assignments, open or paused sponsored allocations, outstanding
+payouts, and unsettled earned shares hold the request in `pending_closure`.
+Pending clients retain access to resolve payouts and can cancel the request. Staff
+can complete a previously requested deletion only after its blockers are resolved;
+the admin screen does not provide an arbitrary delete-user action.
+
+Client payout requests reserve only the owned account's unreserved earned share.
+Amounts use exact USD cents and retries use an idempotency key, preventing a
+duplicate request from reserving the same earnings twice. Staff approve or reject
+requests and record an external payment reference when a payment is made. Clients
+can inspect the resulting status history. A requested or approved payment has not
+been sent, and a recorded paid status does not independently verify a bank transfer.
+
+### MetaTrader account synchronization
+
+The MetaTrader connections section uses the official MetaApi SDK to read existing
+MetaTrader 4/5 accounts. Configure `METAAPI_API_TOKEN` privately on the application
+server, create and deploy the account through MetaApi under the prop firm's
+permitted arrangements, then link its MetaApi account ID to an academy sponsored
+record backed by the current approved review. No broker password or API token is
+entered into the website's connection form. This connector does not provision or
+deploy a prop account, place trades, purchase accounts, or transfer money.
+
+Choose the history start at assignment; the default is the previous 30 days.
+An external account and history start stay bound to that sponsored record, so
+history cannot be reassigned to a different trader. The server synchronizes active
+links approximately every 60 seconds, within bounded jobs and provider limits.
+Manual sync is also available. The interface distinguishes last successful sync,
+stale data, unavailable configuration, and incomplete history. Deal IDs and
+correction history prevent duplicate imported results. Only synchronized history
+is reported; recent overlap can detect corrections, while older records outside
+that coverage still require reconciliation.
+
+Provider balances, equity, deals, fees, and cash flows keep the broker account's
+native currency. Deposits and withdrawals are not treated as trading profit.
+These read-only observations do not automatically post a profit statement, select
+a profit split, or create available payout earnings. Staff must reconcile the
+actual agreed settlement before posting to the separate USD-cent ledger. Live
+provider access requires a real configured token and authorized account; mocked
+integration tests alone do not establish that a particular prop firm permits or
+supports the connection.
+
+### Advanced performance reports
+
+Clients use `/performance.html`; authorized admins use Performance analysis to
+inspect a selected trader. Reports include UTC monthly and daily results,
+closing-fill counts and win rates, expectancy, profit factor, recorded drawdown,
+and profit concentration across days. Consistency measures are descriptive and do
+not introduce new qualification rules or promise future returns.
+
+Observed equity curves contain actual captured reference valuations or broker
+snapshots. Historical marked equity is not invented. A separately labeled realized
+balance curve can be reconstructed only when recorded closed assessment fills
+reconcile to the saved balance. Gaps and lines between observations do not recover
+unrecorded market moves. Sponsored reports preserve native currency and disclose
+history limits, omitted or unclassified records, fees, cash flows, and staleness.
+MetaTrader partial closes can be separate closing fills; their win rate is not a
+round-trip-position win rate. Standalone costs affect net results without being
+assigned to an invented winning or losing position.
+
+### Error monitoring, backups, and recovery checks
+
+Operations & recovery shows bounded server-error fingerprints, occurrence counts,
+sanitized routes, backup history, and recovery-check results. Raw request bodies,
+credentials, and exception text are not stored in the monitoring view. Monitoring
+is local to this installation; no external alerting service is configured.
+
+The running server schedules encrypted, SQLite-consistent local backups. Defaults
+are one backup every 24 hours, seven retained artifacts, and an initial job after
+about 30 seconds. `BACKUP_DIRECTORY`, `BACKUP_INTERVAL_HOURS`, and
+`BACKUP_RETENTION_COUNT` configure storage and rotation. Artifacts include the
+database and required authenticator/push keys, verify integrity in an isolated
+copy, and are never served from `public/`. Each recovery check reapplies the
+current account-deletion ledger without modifying the running application.
+
+Backups use AES-256-GCM. Preserve a separate secure copy of the stable
+`BACKUP_ENCRYPTION_KEY`, if directly configured, or the generated private
+`backup-key.json` beside the database. This encryption key is deliberately not
+included inside the backup it decrypts. Losing it prevents recovery. Keep the
+database, backups, and their necessary keys on persistent storage; local backups
+on the same ephemeral Render instance do not protect against instance loss.
+Offsite backup storage is not configured.
+
+Trusted operators can use the existing private `DATABASE_PATH`:
+
+```sh
+npm run operations -- status
+npm run operations -- backup
+npm run operations -- verify
+npm run operations -- verify --backup BACKUP_UUID
+npm run operations -- restore --backup BACKUP_UUID --target /secure/new-academy-recovery --confirmation "RESTORE TO NEW DIRECTORY"
+```
+
+The CLI requires a healthy current database and its latest deletion ledger. It
+creates a new private directory and refuses to replace an existing target or live
+database. These tools provide tested backup checks and fresh-copy recovery, not
+complete recovery after losing the current database/deletion ledger or the host.
+An operator still needs a separate offsite disaster-recovery procedure.
+
+A recovered copy revokes old sessions, pending authentication/email/reset tokens,
+push subscriptions, queued delivery jobs, and recovery-code hashes. Accounts must
+complete password recovery before signing in; enabled authenticator secrets stay
+enabled and must use the restored original encryption key. Generate replacement
+recovery codes after regaining access. See DEPLOYMENT.md before activating any
+recovered copy.
 
 ### Required trader agreement
 
@@ -178,10 +315,11 @@ Configuration:
 - `COOKIE_SECURE=true`: secure cookies; enable with HTTPS for deployment.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
-single-server development backend. Account deletion, a finalized retention
-policy, automated operational backups, and external prop-account/payment
-integrations still need implementation. Admin reviews and manual financial
-records are available; they do not replace those external integrations.
+single-server development backend. Account controls, MetaApi performance reads,
+payout requests, advanced reports, and encrypted local backup/recovery checks are
+implemented. A finalized retention policy, offsite disaster-recovery storage, real
+provider configuration, and payment execution still need operator setup or an
+additional integration. Manual payment records do not send funds.
 Formal program terms and legal/privacy information must be finalized before launch.
 
 API endpoints: POST `/api/register`, `/api/login`, `/api/logout`, `/api/trades`,
@@ -538,8 +676,8 @@ AI and email transports; they do not establish live provider billing or inbox re
 
 `leaderboard.html` is a public ranking of opted-in traders who signed the current
 academy contract. It compares the realized return on the reference-priced
-qualifying assessment linked to that signature. Sponsored prop-account performance
-is not imported into this application and is not represented by these rankings.
+qualifying assessment linked to that signature. MetaApi-sponsored performance is
+available separately in private performance reports and is not used by these rankings.
 
 A trader must have an owned reference-price certificate showing at least three
 trading days and a 10% return, a matching signature for the currently active

@@ -102,10 +102,11 @@ Each user has a separate account. The challenge has a 10% realized-profit target
 10% static total drawdown from starting balance, and 5% daily drawdown from
 UTC day-start equity. Passing requires no open positions and fills on at least 3 distinct UTC trading days. These practice outcomes
 do not approve funding. Email confirmation, notification opt-in verification,
-password recovery, authenticator security, admin review workflows, and manual
-sponsored-account/payout records are implemented. Account deletion/retention,
-automated production backups, and external prop-account/payment integrations
-remain unfinished. Paper trades fill at verified market-reference prices without
+password recovery, authenticator security, admin reviews, account closure and
+personal-data export, client payout requests, MetaApi performance reads, advanced
+reports, and encrypted local backups with isolated recovery checks are implemented.
+Company privacy/retention rules, permitted provider configuration, durable/offsite
+storage, and actual payment execution remain operator requirements. Paper trades fill at verified market-reference prices without
 an added spread. Stale or unavailable quotes pause execution; this still does not
 establish live account performance. Intraday forex requires Twelve Data
 configuration; daily ECB closes are display-only. Earlier price-model attempts
@@ -166,8 +167,9 @@ do not use either policy until its treatment matches the signed agreement.
 Payout requests and approvals reserve available recorded trader earnings;
 rejection releases the reservation. An approved payout can be marked paid only
 with an external payment reference. Staff still need to verify and carry out the
-external transaction and reconcile evidence. No prop-firm purchase, live funded
-account feed, bank transfer, or independent evidence verification is supplied.
+external transaction and reconcile evidence. No prop-firm purchase, bank transfer,
+or independent evidence verification is supplied. Authorized MetaApi connections
+can import existing account performance separately from the settlement ledger.
 Clients see only their own review message and financial records. Internal notes
 and evidence references remain restricted to authorized staff.
 
@@ -176,3 +178,85 @@ backups, retain authentication and push keys, review staff grants, and finalize
 privacy, retention, and deletion procedures. Free Render preview storage is
 temporary and unsuitable for lasting signatures or financial records. Immutable
 application audit tables do not replace an operator-controlled backup process.
+
+
+### Customer data and account closure
+
+Use Account controls at /account-tools.html for personal-data export, account
+closure, and client payout requests. Export/deletion/payout confirmations are
+separate session-bound privileges lasting five minutes after password and, when
+enabled, a fresh second factor. The full export follows all bounded pages and
+checks a stable fingerprint; a changed or partial dataset must be retried rather
+than presented as complete. Authentication secrets, other users, staff identities,
+private provider credentials, and internal reviewer notes are excluded.
+
+An owner-requested closure stays pending while staff/support access, an open
+sponsored allocation, pending payout, or unpaid earned share remains. Keep the
+client able to resolve those obligations and allow cancellation. Staff can finish
+a prior requested closure after blockers are cleared, using the audited console.
+The confirmation removes mutable operational personal data and the usable
+profile, revokes authentication, disconnects provider access, and returns a receipt.
+Immutable signed agreements, financial records, review/audit history, and older
+backups may remain as disclosed. Define a real retention policy and review retained
+records; do not advertise complete erasure or an invented statutory retention term.
+
+### MetaApi monitoring and reconciliation
+
+Confirm the selected prop firm's rules permit MetaApi access. Configure the actual
+MetaApi token privately on the application server and keep broker credentials out
+of forms, support, Git, and chat. Link an existing deployed MetaTrader 4/5 account
+only to the academy allocation backed by a current approved review. Choose the
+history start deliberately; the default is the preceding 30 days. The connector
+reads account information and deal history, normally around once per minute while
+the server runs. It does not provision/deploy an account, trade, purchase accounts,
+or execute withdrawals/payments. Check missing-key, stale, and incomplete-history
+statuses before relying on displayed data.
+
+Reconcile native-currency deals, trading fees, and cash flows with the provider.
+Deposits and withdrawals are not profit; unexplained adjustments and history gaps
+must be reviewed. Provider equity does not automatically become available earnings
+in the USD-cent ledger. Post actual settlement statements using the signed share
+and sharing policy, then handle client payout requests against unreserved earned
+amounts. Idempotent request keys prevent duplicate holds after uncertain retries.
+Approve or reject requests, carry out approved payments through the chosen external
+channel, record references, and reconcile the status history. A recorded paid label
+is evidence entered by staff, not independent proof that the bank paid.
+
+Private performance reports show observed equity, separately labeled realized
+balance where reconciliation permits it, UTC monthly results, drawdown, and daily
+profit concentration. Historical equity is not manufactured. MetaTrader closing
+execution records can include partial closes, so fill win rate is not a round-trip
+position win rate; standalone fees can affect profit without belonging to a
+particular closing fill. Read coverage, currency, and staleness notes. Consistency
+analysis describes past records and does not create extra assessment rules.
+
+### Operational monitoring and recovery
+
+Review sanitized server-error fingerprints, counts, failed jobs, encrypted backup
+history, and isolated recovery results from Operations & recovery. The local error
+view does not contain raw request bodies, exception text, or credentials. Assign
+staff responsibility for checking it; external alert delivery is not configured.
+
+The running server schedules SQLite-consistent AES-256-GCM local backups. Defaults
+are an initial run after about 30 seconds, a 24-hour interval, and seven retained
+artifacts by count. Artifacts include required authenticator/push keys and are
+verified in an isolated copy. Store them privately on persistent storage and keep a
+separate secure copy of BACKUP_ENCRYPTION_KEY or the generated backup-key.json.
+That decryption key is deliberately outside the encrypted artifact.
+
+Recovery checks reapply the current completed-deletion ledger to prevent an older
+backup from resurrecting erased profiles or reusing deleted user IDs. CLI restore
+requires the healthy current database/latest ledger and creates a new private
+folder only; it never replaces a live or existing target. It is fresh-copy recovery
+and verification, not a complete lost-host or lost-database disaster-recovery path.
+Restored old sessions, tokens, queued delivery jobs, and recovery codes are revoked;
+accounts require a fresh password reset and retain enabled authenticator protection
+with the original key. Plan working recovery-email delivery and authenticator access
+before activating a recovered copy.
+
+No offsite destination is configured. An ephemeral Render instance can lose its
+database, local backup artifacts, and keys together. Establish persistent storage,
+a protected offsite backup/latest-deletion-ledger process, a separately preserved
+key, and an independently tested disaster-recovery procedure before relying on
+lasting company records. Finalize retention/deletion rules and access reviews.
+See DEPLOYMENT.md for the exact supported commands and current limitations.
