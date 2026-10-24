@@ -1,3 +1,5 @@
+import {createProfitSharingView,payoutStatement,payoutProcessingText} from './profit-sharing-view.js';
+
 export function amountToCents(value) {
   const raw = String(value ?? '').trim();
   if (raw.length > 32 || !/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a USD amount with at most two decimal places.');
@@ -46,6 +48,10 @@ async function initializeAccountTools() {
   const money = value => Number.isSafeInteger(value) ? new Intl.NumberFormat('en-US', { style:'currency',currency:'USD' }).format(value/100) : '—';
   const when = value => Number.isSafeInteger(value) && value > 0 && value <= 8640000000000000 ? new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'Time unavailable';
   const node = (tag, className, text) => { const item=document.createElement(tag); if(className)item.className=className;if(text!==undefined)item.textContent=text;return item; };
+  const sharing=createProfitSharingView({document,onDownload:receipt=>{
+    try{const statement=payoutStatement(receipt);download(statement,`fundraiser-academy-payout-${statement.id}.json`);announce('Your payout statement download started. Keep this financial record private.');}
+    catch(error){announce(error.message||'The payout statement could not be prepared. Refresh your records and try again.');}
+  }});
   function announce(text) { byId('tools-status').textContent=text; }
   function setBusy(value) { state.busy=value; for(const id of ['payout-submit','payout-retry-pending','tools-export','closure-submit','closure-cancel','tools-refresh'])byId(id).disabled=value; }
   async function api(endpoint, data) {
@@ -58,7 +64,7 @@ async function initializeAccountTools() {
     if(!object(value))throw new Error('The server returned an invalid response.');
     return value;
   }
-  function clearPrivate() { byId('tools-main').hidden=true;for(const id of ['payout-balances','payout-history','closure-blockers','closure-retained'])byId(id).replaceChildren();byId('payout-account').replaceChildren();state.funding=null;state.controls=null;state.grants={}; }
+  function clearPrivate() { byId('tools-main').hidden=true;for(const id of ['payout-balances','payout-history','payout-profit-sharing','closure-blockers','closure-retained'])byId(id).replaceChildren();byId('payout-account').replaceChildren();state.funding=null;state.controls=null;state.grants={}; }
   function failure(error) {
     if(state.ended||error.code==='PAGE_INACTIVE')return;
     if(error.status===401||error.status===403&&['ACCOUNT_SUSPENDED','ACCOUNT_DELETED'].includes(error.code)){
@@ -74,6 +80,7 @@ async function initializeAccountTools() {
   function renderPending() {const pending=state.pending;byId('payout-pending-panel').hidden=!pending;if(pending)byId('payout-pending-message').textContent=`The result of your ${money(pending.amountCents)} request is not yet confirmed. Retry with the same request reference to avoid reserving it twice.`;}
   function renderPayouts(funding) {
     if(!Array.isArray(funding.accounts)||!Array.isArray(funding.payouts)||funding.accounts.some(x=>!object(x))||funding.payouts.some(x=>!object(x)))throw new Error('Your payout records could not be read.');
+    sharing.render(byId('payout-profit-sharing'),funding);
     const metrics=byId('payout-balances');metrics.replaceChildren();
     for(const [title,key]of[['Unreserved earned share','availableCents'],['Reserved for requests','reservedCents'],['Recorded paid','paidCents']]){const box=node('div','rounded-lg border border-line p-4');const amounts=funding.accounts.map(account=>account[key]);const total=amounts.every(Number.isSafeInteger)?amounts.reduce((sum,n)=>sum+n,0):null;box.append(node('p','metric-label',title),node('p','text-2xl font-semibold tracking-tight',money(total)));metrics.append(box);}
     const select=byId('payout-account'),selected=select.value;select.replaceChildren(node('option','', 'Choose an account'));select.firstChild.value='';
@@ -81,11 +88,11 @@ async function initializeAccountTools() {
     byId('payout-empty').hidden=funding.accounts.length>0;byId('payout-request-form').hidden=!funding.accounts.length;accountChanged();
     const history=byId('payout-history');history.replaceChildren();
     for(const payout of funding.payouts){const card=node('article','rounded-xl border border-line p-5');const top=node('div','flex flex-wrap items-center justify-between gap-3');top.append(node('h3','text-lg',money(payout.amountCents)),node('span','rounded-full border border-line px-3 py-1 text-xs',statuses[payout.status]||'Status unavailable'));card.append(top,node('p','mt-3 break-words text-sm',payout.label||'Sponsored account'),node('p','mt-1 text-xs text-muted',`${payout.requestOrigin==='trader'?'Requested by you':'Recorded by the academy'} · ${when(payout.createdAt)}`));
-      if(Array.isArray(payout.history)&&payout.history.length){const list=node('ol','mt-4 space-y-2 border-t border-line pt-4');for(const event of payout.history){if(!object(event))continue;list.append(node('li','text-xs text-muted',`${statuses[event.status]||'Status update'} · ${when(event.createdAt)}`));}card.append(list);}if(payout.status==='paid')card.append(node('p','mt-3 text-xs text-muted',`Payment recorded outside this website · ${when(payout.paidAt)}`));history.append(card);}
+      if(Array.isArray(payout.history)&&payout.history.length){const list=node('ol','mt-4 space-y-2 border-t border-line pt-4');for(const event of payout.history){if(!object(event))continue;list.append(node('li','text-xs text-muted',`${statuses[event.status]||'Status update'} · ${when(event.createdAt)}`));}card.append(list);}if(payout.status==='paid')card.append(node('p','mt-3 text-xs text-muted',`Payment recorded outside this website · ${when(payout.paidAt)}`));const processing=payoutProcessingText(payout);if(processing)card.append(node('p','mt-3 text-xs text-muted',processing));history.append(card);}
     if(!funding.payouts.length)history.append(node('p','rounded-lg border border-line p-4 text-sm text-muted','No payout requests or payments have been recorded yet.'));
     byId('payout-history-summary').textContent=`${Number.isSafeInteger(funding.payoutsTotal)?funding.payoutsTotal:funding.payouts.length} requests recorded. Showing the ${funding.payouts.length} most recent.`;renderPending();
   }
-  function accountChanged(){const account=state.funding?.accounts.find(x=>x.id===byId('payout-account').value);byId('payout-account-detail').textContent=account?`${account.firmName||'Prop firm'} · ${Number.isSafeInteger(account.traderShareBps)?account.traderShareBps/100:'—'}% agreed trader share · ${money(account.availableCents)} unreserved.`:'';if(account&&Number.isSafeInteger(account.availableCents))byId('payout-amount').max=String(account.availableCents/100);else byId('payout-amount').removeAttribute('max');}
+  function accountChanged(){const account=state.funding?.accounts.find(x=>x.id===byId('payout-account').value),progressive=account?.sharingModel==='progressive_cleared';byId('payout-account-detail').textContent=account?`${account.firmName||'Prop firm'} · ${Number.isSafeInteger(account.traderShareBps)?account.traderShareBps/100:'—'}% ${progressive?'on your next eligible cleared payout':'agreed profit share'} · ${money(account.availableCents)} unreserved.`:'';if(account&&Number.isSafeInteger(account.availableCents))byId('payout-amount').max=String(account.availableCents/100);else byId('payout-amount').removeAttribute('max');}
   function renderControls(controls){
     if(typeof controls.status!=='string'||!Array.isArray(controls.blockers)||!Array.isArray(controls.retained))throw new Error('Your account-closure status could not be read.');
     byId('closure-notice').textContent=typeof controls.retentionNotice==='string'?controls.retentionNotice:'Closure removes your operational profile. Restricted signed agreements, financial and administrative records may remain for retention review.';

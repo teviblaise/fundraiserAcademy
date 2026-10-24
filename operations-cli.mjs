@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {createOperations} from './operations.mjs';
 import {createOperationalHealth} from './operational-health.mjs';
+import {summarizeProgressiveProcessing} from './progressive-finance.mjs';
 
 const usage='Usage: node operations-cli.mjs status | health | diagnose | backup | verify [--backup UUID] | restore --backup UUID --target NEW_DIRECTORY --confirmation "RESTORE TO NEW DIRECTORY"';
 const [action,...args]=process.argv.slice(2);
@@ -30,6 +31,7 @@ try{
    let emailAvailable=false;
    try{emailAvailable=Boolean(new URL(process.env.APP_ORIGIN||process.env.RENDER_EXTERNAL_URL).protocol==='https:'&&process.env.RESEND_API_KEY&&process.env.EMAIL_FROM);}catch{}
    health=createOperationalHealth(db,databasePath,{operations,observer:true,
+    paymentProcessing:()=>summarizeProgressiveProcessing(db),
     configuration:()=>({emailAvailable,forexConfigured:Boolean(process.env.TWELVE_DATA_API_KEY)}),
     sponsored:{status:()=>({configured:Boolean(process.env.METAAPI_API_TOKEN),automaticSync:false,intervalSeconds:60})}});
   }

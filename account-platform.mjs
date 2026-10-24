@@ -22,7 +22,7 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
   const sponsored=createSponsoredSync(db,{access,workflows:admin.workflows,now,...options.sponsored});
   const reports=createPerformanceReports(db,{now,sponsoredSync:sponsored});
   const operations=createOperations(db,databasePath,{now,autoStart:false,deletionLedger:()=>controls.exportDeletionLedger(),...options.operations});
-  const health=createOperationalHealth(db,databasePath,{now,operations,sponsored,configuration,...options.health});
+  const health=createOperationalHealth(db,databasePath,{now,operations,sponsored,configuration,paymentProcessing:()=>admin.finance.processingSummary(),...options.health});
   db.exec(`CREATE TABLE IF NOT EXISTS account_tool_privileges (
     token TEXT NOT NULL REFERENCES sessions(token) ON DELETE CASCADE,
     purpose TEXT NOT NULL CHECK(purpose IN ('export','delete','payout')),

@@ -1,5 +1,5 @@
 import { metrics } from './public/simulator.js';
-import { contractConsentStatement } from './contracts.mjs';
+import { contractConsentStatement, requiredContractDocument } from './contracts.mjs';
 
 export class AdminDataError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -87,14 +87,14 @@ function certificateQualified(row) {
   return Number.isFinite(actual) && actual >= 10 && Math.abs(actual - row.profit_percent) <= Math.max(1e-8, Math.abs(actual) * 1e-10);
 }
 function certificateView(row) {
-  return { id: row.id, userId: row.user_id, traderName: row.trader_name, email: row.email, holder: row.holder,
+  return { id: row.id, userId: row.user_id, traderName: row.trader_name, traderFirstName: row.trader_first_name, email: row.email, holder: row.holder,
     issuedAt: timestamp(row.issued_at), initialBalance: finite(row.initial_balance), finalBalance: finite(row.final_balance), profitPercent: finite(row.profit_percent), tradingDays: row.trading_days, priceMode: row.price_mode, qualified: certificateQualified(row), downloadUrl: `/api/admin/certificates/${encodeURIComponent(row.id)}.svg` };
 }
 function documentView(row) {
-  return row ? { id: row.id, title: row.title, version: row.version, hash: row.hash, format: row.format, fileName: row.file_name, publishedAt: row.published_at, active: Boolean(row.active), signatureCount: row.signature_count ?? 0, documentUrl: `/api/admin/contracts/${encodeURIComponent(row.id)}/document` } : null;
+  return row ? { id: row.id, title: row.title, version: row.version, hash: row.hash, format: row.format, fileName: row.file_name, publishedAt: row.published_at, active: Boolean(row.active), scope:row.recipient_user_id==null?'global':'personal',recipientUserId:row.recipient_user_id??null,signatureCount: row.signature_count ?? 0, documentUrl: `/api/admin/contracts/${encodeURIComponent(row.id)}/document` } : null;
 }
 function signatureView(row) {
-  return { id: row.id, userId: row.user_id, traderName: row.trader_name, email: row.email, legalName: row.legal_name, signedAt: row.signed_at, contractId: row.contract_id, contractVersion: row.contract_version, contractHash: row.contract_hash, certificateId: row.certificate_id };
+  return { id: row.id, userId: row.user_id, traderName: row.trader_name, traderFirstName: row.trader_first_name, email: row.email, legalName: row.legal_name, signedAt: row.signed_at, contractId: row.contract_id, contractVersion: row.contract_version, contractHash: row.contract_hash, certificateId: row.certificate_id };
 }
 const qualifiedSQL = alias => `${alias}.price_mode='reference' AND ${alias}.trading_days>=3 AND ${alias}.trading_days=CAST(${alias}.trading_days AS INTEGER) AND ${alias}.issued_at>0 AND ${alias}.initial_balance>0 AND abs(${alias}.initial_balance)<1e100 AND ${alias}.final_balance>=${alias}.initial_balance*1.1 AND abs(${alias}.final_balance)<1e100 AND ${alias}.profit_percent>=10 AND abs(${alias}.profit_percent)<1e100 AND abs(((${alias}.final_balance/${alias}.initial_balance)-1)*100-${alias}.profit_percent)<=max(1e-8,abs(${alias}.profit_percent)*1e-10)`;
 const stateStatusSQL = `CASE WHEN has_account=0 THEN 'not_started' WHEN valid_json=0 THEN 'unavailable'
@@ -155,15 +155,14 @@ export function createAdminData(db, { now = Date.now, workflows } = {}) {
     if (!signed) return 'signature_required';
     return signed.user_id === id && signed.contract_version === document.version && signed.contract_hash === document.hash && signed.consent_statement === contractConsentStatement && certificateQualified(signed) && signed.signed_at >= Math.max(signed.issued_at, document.published_at) ? 'signed' : 'invalid_signature';
   }
-  function traderItem(row, document = activeDocument()) {
+  function traderItem(row, document = requiredContractDocument(db,row.id)) {
     const state = parseState(row.raw_state);
-    return { id: row.id, name: row.name, email: row.email, market: row.market, createdAt: row.created_at, emailVerified: Boolean(row.email_verified), assessmentAccess: !row.email_confirmation_required || Boolean(row.email_verified), accountStatus: row.account_status, twoFactorEnabled: Boolean(row.factor_enabled), certificateCount: db.prepare('SELECT count(*) n FROM certificates WHERE user_id=?').get(row.id).n, contractStatus: contractStatus(row.id, document), assessment: assessmentView(state, Boolean(row.has_account), now()) };
+    return { id: row.id, name: row.name, firstName: row.first_name, email: row.email, market: row.market, createdAt: row.created_at, emailVerified: Boolean(row.email_verified), assessmentAccess: !row.email_confirmation_required || Boolean(row.email_verified), accountStatus: row.account_status, twoFactorEnabled: Boolean(row.factor_enabled), certificateCount: db.prepare('SELECT count(*) n FROM certificates WHERE user_id=?').get(row.id).n, contractStatus: contractStatus(row.id, document), assessment: assessmentView(state, Boolean(row.has_account), now()) };
   }
   function traders(query = {}) {
     const paging = pagination(query), filter = traderFilter(query);
     const count = db.prepare(`${base()} SELECT count(*) n FROM classified ${filter.where}`).get(...filter.params).n;
-    const document = activeDocument();
-    const items = db.prepare(`${base()} SELECT * FROM classified ${filter.where} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`).all(...filter.params, paging.limit, paging.offset).map(row => traderItem(row, document));
+    const items = db.prepare(`${base()} SELECT * FROM classified ${filter.where} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`).all(...filter.params, paging.limit, paging.offset).map(row => traderItem(row));
     return page(items, count, paging);
   }
   function assessments(query = {}) { return traders(query); }
@@ -174,15 +173,15 @@ export function createAdminData(db, { now = Date.now, workflows } = {}) {
     if (query.userId !== undefined && query.userId !== '') { clauses.push('c.user_id=?'); params.push(userId(query.userId)); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const total = db.prepare(`SELECT count(*) n FROM certificates c JOIN users u ON u.id=c.user_id ${where}`).get(...params).n;
-    const rows = db.prepare(`SELECT c.*,u.name AS trader_name,u.email FROM certificates c JOIN users u ON u.id=c.user_id ${where} ORDER BY c.issued_at DESC,c.id LIMIT ? OFFSET ?`).all(...params, paging.limit, paging.offset);
+    const rows = db.prepare(`SELECT c.*,u.name AS trader_name,u.first_name AS trader_first_name,u.email FROM certificates c JOIN users u ON u.id=c.user_id ${where} ORDER BY c.issued_at DESC,c.id LIMIT ? OFFSET ?`).all(...params, paging.limit, paging.offset);
     return page(rows.map(certificateView), total, paging);
   }
   function contractsPage(query = {}) {
     const paging = pagination(query), active = activeDocument();
     const total = db.prepare('SELECT count(*) n FROM contract_documents').get().n;
-    const documentRows = db.prepare(`SELECT d.id,d.title,d.version,d.hash,d.format,d.file_name,d.published_at,CASE WHEN d.id=? THEN 1 ELSE 0 END AS active,(SELECT count(*) FROM contract_signatures s WHERE s.contract_id=d.id) AS signature_count FROM contract_documents d ORDER BY d.published_at DESC,d.id LIMIT ? OFFSET ?`).all(active?.id ?? '', paging.limit, paging.offset);
+    const documentRows = db.prepare(`SELECT d.id,d.title,d.version,d.hash,d.format,d.file_name,d.published_at,d.recipient_user_id,CASE WHEN d.recipient_user_id IS NULL AND d.id=? THEN 1 WHEN EXISTS(SELECT 1 FROM user_active_contract p WHERE p.user_id=d.recipient_user_id AND p.contract_id=d.id) THEN 1 ELSE 0 END AS active,(SELECT count(*) FROM contract_signatures s WHERE s.contract_id=d.id) AS signature_count FROM contract_documents d ORDER BY d.published_at DESC,d.id LIMIT ? OFFSET ?`).all(active?.id ?? '', paging.limit, paging.offset);
     const signatureCount = db.prepare('SELECT count(*) n FROM contract_signatures').get().n;
-    const signatureRows = db.prepare('SELECT s.*,u.name AS trader_name,u.email FROM contract_signatures s JOIN users u ON u.id=s.user_id ORDER BY s.signed_at DESC,s.id LIMIT ? OFFSET ?').all(paging.limit, paging.offset);
+    const signatureRows = db.prepare('SELECT s.*,u.name AS trader_name,u.first_name AS trader_first_name,u.email FROM contract_signatures s JOIN users u ON u.id=s.user_id ORDER BY s.signed_at DESC,s.id LIMIT ? OFFSET ?').all(paging.limit, paging.offset);
     return { ...page(documentRows.map(documentView), total, paging), active: active ? documentView({ ...active, active: 1, signature_count: db.prepare('SELECT count(*) n FROM contract_signatures WHERE contract_id=?').get(active.id).n }) : null, signatures: page(signatureRows.map(signatureView), signatureCount, paging) };
   }
   function trader(id, query = {}) {
@@ -192,7 +191,7 @@ export function createAdminData(db, { now = Date.now, workflows } = {}) {
     const state = parseState(row.raw_state), item = traderItem(row), paging = { limit: integer(query.tradeLimit ?? query.limit, 50, 1, 100, 'trade page size'), offset: integer(query.tradeOffset ?? query.offset, 0, 0, 1000000, 'trade offset') };
     const history = (Array.isArray(state?.history) ? state.history : []).filter(value=>value && typeof value==='object' && !Array.isArray(value));
     const certificates = certificatesPage({ userId: id, limit: 100 });
-    const agreementRows = db.prepare('SELECT s.*,u.name AS trader_name,u.email FROM contract_signatures s JOIN users u ON u.id=s.user_id WHERE s.user_id=? ORDER BY s.signed_at DESC,s.id LIMIT 100').all(id);
+    const agreementRows = db.prepare('SELECT s.*,u.name AS trader_name,u.first_name AS trader_first_name,u.email FROM contract_signatures s JOIN users u ON u.id=s.user_id WHERE s.user_id=? ORDER BY s.signed_at DESC,s.id LIMIT 100').all(id);
     const sessionCount = exists('sessions') ? db.prepare('SELECT count(*) n FROM sessions WHERE user_id=? AND expires>? AND last_seen>?').get(id, now(), now() - 86400000).n : 0;
     const notes = exists('admin_notes') ? db.prepare('SELECT n.id,n.user_id AS userId,n.actor_user_id AS actorUserId,u.name AS actorName,n.text,n.created_at AS createdAt FROM admin_notes n LEFT JOIN users u ON u.id=n.actor_user_id WHERE n.user_id=? ORDER BY n.created_at DESC,n.id DESC LIMIT 100').all(id) : [];
     const reviewHistory = exists('sponsorship_review_history') ? db.prepare('SELECT id,user_id AS userId,revision,status,contract_id AS contractId,contract_hash AS contractHash,certificate_id AS certificateId,reason,client_message AS clientMessage,actor_user_id AS actorUserId,created_at AS createdAt FROM sponsorship_review_history WHERE user_id=? ORDER BY revision DESC,id DESC LIMIT 100').all(id) : [];
@@ -207,7 +206,7 @@ export function createAdminData(db, { now = Date.now, workflows } = {}) {
     metrics.certificates = db.prepare('SELECT count(*) n FROM certificates').get().n;
     metrics.qualifiedTraders = db.prepare(`SELECT count(DISTINCT c.user_id) n FROM certificates c WHERE ${qualifiedSQL('c')}`).get().n;
     const document = activeDocument();
-    metrics.currentSignatures = document ? db.prepare(`SELECT count(*) n FROM contract_signatures s JOIN certificates c ON c.id=s.certificate_id WHERE s.contract_id=? AND s.contract_version=? AND s.contract_hash=? AND s.consent_statement=? AND c.user_id=s.user_id AND s.signed_at>=max(c.issued_at,?) AND ${qualifiedSQL('c')}`).get(document.id, document.version, document.hash, contractConsentStatement, document.published_at).n : 0;
+    metrics.currentSignatures = db.prepare(`SELECT count(*) n FROM contract_signatures s JOIN certificates c ON c.id=s.certificate_id JOIN contract_documents d ON d.id=s.contract_id LEFT JOIN user_active_contract p ON p.user_id=s.user_id WHERE s.contract_id=coalesce(p.contract_id,?) AND (d.recipient_user_id IS NULL OR d.recipient_user_id=s.user_id) AND s.contract_version=d.version AND s.contract_hash=d.hash AND s.consent_statement=? AND c.user_id=s.user_id AND s.signed_at>=max(c.issued_at,d.published_at) AND ${qualifiedSQL('c')}`).get(document?.id??null,contractConsentStatement).n;
     const registrations = new Map(db.prepare("SELECT strftime('%Y-%m-%d',created_at/1000,'unixepoch') AS day,count(*) n FROM users WHERE created_at>=? AND created_at<? GROUP BY day").all(start, end).map(row => [row.day, row.n]));
     const completions = new Map(db.prepare(`SELECT strftime('%Y-%m-%d',c.issued_at/1000,'unixepoch') AS day,count(*) n FROM certificates c WHERE c.issued_at>=? AND c.issued_at<? AND ${qualifiedSQL('c')} GROUP BY day`).all(start, end).map(row => [row.day, row.n]));
     const daily = Array.from({ length: days }, (_, index) => { const date = new Date(start + index * 86400000).toISOString().slice(0, 10); return { date, registrations: registrations.get(date) ?? 0, qualifiedAssessments: completions.get(date) ?? 0 }; });

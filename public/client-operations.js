@@ -1,3 +1,5 @@
+import {createProfitSharingView,payoutStatement,payoutProcessingText} from './profit-sharing-view.js';
+
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);
@@ -10,6 +12,14 @@
   let loaded = false;
   let ended = false;
   let generation = 0;
+  const sharing = createProfitSharingView({document,onDownload:receipt=>{
+    if (ended) return;
+    try {
+      const statement=payoutStatement(receipt),url=URL.createObjectURL(new Blob([JSON.stringify(statement,null,2)],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download=`fundraiser-academy-payout-${statement.id}.json`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      status.textContent='Your payout statement download started. Keep this financial record private.';
+    } catch(error) {status.textContent=error.message;}
+  }});
 
   const reviewStates = {
     assessment_required: ['Assessment required', 'Pass a reference-priced assessment with at least 10% realized profit over 3 distinct trading days before sponsorship review.', '/dashboard.html', 'Continue your assessment'],
@@ -28,6 +38,7 @@
   const policies = {
     cumulative_high_water: 'Profit share uses the cumulative high-water policy in your recorded account terms.',
     settled_period: 'Profit share uses the settled-period policy in your recorded account terms.',
+    progressive_cleared: 'Your retained tier applies to the next eligible cleared prop-firm payout. All eligible accounts in your continuous contractual relationship contribute to the same progression total.',
   };
   const safeText = value => typeof value === 'string' ? value : '';
   const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -56,6 +67,7 @@
     for (const [key, total] of [['accounts', 'accountsTotal'], ['payouts', 'payoutsTotal']]) {
       if (!Array.isArray(payload.funding[key]) || payload.funding[key].length > 100 || payload.funding[key].some(item => !record(item)) || !Number.isSafeInteger(payload.funding[total]) || payload.funding[total] < payload.funding[key].length) throw new Error('INVALID_RESPONSE');
     }
+    for (const key of ['progressions','receipts']) if (payload.funding[key] !== undefined && (!Array.isArray(payload.funding[key]) || payload.funding[key].length > 100 || payload.funding[key].some(item=>!record(item)))) throw new Error('INVALID_RESPONSE');
     return payload;
   }
   function renderReview(view) {
@@ -83,9 +95,11 @@
     card.append(element('p', 'mt-3 text-xs text-lime', Object.hasOwn(accountStates, row.status) ? accountStates[row.status] : 'Account status unavailable'));
     const share = Number.isSafeInteger(row.traderShareBps) && row.traderShareBps >= 0 && row.traderShareBps <= 10000 ? `${row.traderShareBps / 100}%` : '—';
     const metrics = element('dl', 'mt-4 grid grid-cols-2 gap-4');
-    metrics.append(metric('Account size', money(row.accountSizeCents)), metric('Your profit share', share), metric('Recorded net profit', money(row.cumulativeNetProfitCents)), metric('Your earned share', money(row.earnedCents)), metric('Reserved for payouts', money(row.reservedCents)), metric('Recorded payments', money(row.paidCents)), metric('Unreserved earned share', money(row.availableCents)));
+    const progressive=row.sharingModel==='progressive_cleared';
+    metrics.append(metric('Account size', money(row.accountSizeCents)), metric(progressive?'Your share on next eligible payout':'Your profit share', share), metric(progressive?'Qualifying net payouts · all eligible accounts':'Recorded net profit', money(progressive?row.progression?.cumulativeQualifyingNetPayoutsCents:row.cumulativeNetProfitCents)), metric('Your earned share', money(row.earnedCents)), metric('Reserved for payouts', money(row.reservedCents)), metric('Recorded payments', money(row.paidCents)), metric('Unreserved earned share', money(row.availableCents)));
     card.append(metrics);
     if (Object.hasOwn(policies, row.profitSharingPolicy)) card.append(element('p', 'mt-4 text-xs text-muted', policies[row.profitSharingPolicy]));
+    if (!progressive) card.append(element('p','mt-3 text-xs text-muted','Existing account terms remain in effect. Historical statements and payments have not been recalculated.'));
     const updated = date(row.updatedAt);
     if (updated) card.append(element('p', 'mt-3 text-xs text-muted', `Account record updated: ${updated}`));
     return card;
@@ -99,11 +113,13 @@
     if (created) card.append(element('p', 'mt-3 text-xs text-muted', `Recorded: ${created}`));
     if (row.status === 'paid' && paid) card.append(element('p', 'mt-1 text-xs text-muted', `Recorded payment date: ${paid}`));
     else if (updated) card.append(element('p', 'mt-1 text-xs text-muted', `Updated: ${updated}`));
+    const processing=payoutProcessingText(row);if(processing)card.append(element('p','mt-3 text-xs text-muted',processing));
     return card;
   }
   function render(payload) {
     renderReview(payload.review);
     const funding = payload.funding;
+    sharing.render(byId('sponsored-profit-sharing'),funding);
     byId('sponsored-accounts-summary').textContent = summary(funding.accountsTotal, funding.accounts.length, 'account', 'accounts');
     byId('sponsored-payouts-summary').textContent = summary(funding.payoutsTotal, funding.payouts.length, 'payout', 'payouts');
     byId('sponsored-accounts-list').replaceChildren(...(funding.accounts.length ? funding.accounts.map(renderAccount) : [element('p', 'rounded-lg border border-line p-4 text-sm text-muted', 'No sponsored account arrangements have been recorded for your account yet.')]));
@@ -115,6 +131,7 @@
     content.hidden = true;
     byId('sponsored-accounts-list').replaceChildren();
     byId('sponsored-payouts-list').replaceChildren();
+    byId('sponsored-profit-sharing').replaceChildren();
     for (const id of ['sponsorship-review-status', 'sponsorship-review-detail', 'sponsorship-client-message', 'sponsorship-reviewed-at', 'sponsored-accounts-summary', 'sponsored-payouts-summary']) byId(id).textContent = '';
     loaded = false;
   }

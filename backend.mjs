@@ -6,6 +6,7 @@ import { createAccount, advanceMarket, openTrade, closeTrade, refreshRisk, MARKE
 import { createDelivery } from './delivery.mjs';
 import {createCertificates,certificateSvg} from './certificates.mjs';
 import {createContracts,publishContractFile} from './contracts.mjs';
+import {installProvidedAgreement} from './agreement.mjs';
 import {createMarketData} from './market-data.mjs';
 import {createSupport} from './support.mjs';
 import {createLeaderboard} from './leaderboard.mjs';
@@ -52,7 +53,7 @@ function registrationName(data) {
   return { name, ...splitLegacyName(name) };
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
-export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, platformOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, platformOptions, agreementOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -86,6 +87,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const profileView = row => publicUser(row, Boolean(db.prepare('SELECT verified FROM notification_preferences WHERE user_id=?').get(row.id)?.verified));
   const certificates=createCertificates(db);
   const contracts=createContracts(db);
+  if(agreementOptions?.install!==false)installProvidedAgreement(contracts,{now:now()});
   const leaderboard=createLeaderboard(db,{now});
   const marketData=injectedMarketData ?? createMarketData();
   const support=createSupport(db,{now,staffAccess:id=>{const context=adminAccess.context(id);return context.eligible&&context.permissions.includes('support.manage');},...supportOptions});

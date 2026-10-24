@@ -113,25 +113,67 @@ and signature on the exact active agreement. A changed agreement or certificate
 invalidates a stale review basis; a certificate or approval does not issue an
 external prop account.
 
-Sponsored-account allocations, profit statements, and payment confirmations are
-**records of external activity**. Authorized staff must verify the external evidence, explicitly enter
-the account size, agreed trader share, and profit-sharing policy, and bind the
-record to a current approved review. Account terms and posted statements are
-immutable. `cumulative_high_water` allocates profit only above the prior cumulative
-profit high-water mark; losses must be recovered before new profit is shared.
-`settled_period` allocates positive, externally settled periods separately and
-requires confirmation plus nonoverlapping period dates. Neither policy charges a
-negative trader share. Choose the policy required by the actual signed agreement;
-the application does not select business terms for the company.
+Sponsored-account allocations, cleared payout receipts, and payment confirmations
+are **records of external activity**. Approved traders who sign the supplied
+`progressive-profit-sharing-v1` section use the standard progressive model:
 
-Amounts are recorded in USD cents. Requested and approved payouts reserve the
-available recorded trader share; rejection releases it. Marking an approved payout
-paid requires an external payment reference. These controls prevent duplicate
-reservations but do not establish that evidence is genuine or a bank transfer
-occurred. The MetaApi connector described below can read an existing approved
-account's performance; synchronized equity does not credit the payout ledger.
-The website does not purchase prop accounts or transfer money. See DEPLOYMENT.md
-for owner activation and persistent storage requirements.
+| Cumulative qualifying net payouts before the next receipt | Trader | Company |
+| --- | --- | --- |
+| Below $10,000 | 50% | 50% |
+| $10,000 to below $25,000 | 60% | 40% |
+| $25,000 and above | 70% | 30% |
+
+A qualifying receipt is an eligible prop-firm payout actually received and cleared
+by the company, attributable to the trader, after the firm's deductions and agreed
+third-party transaction charges, before the trader/company split. It is recorded
+in USD cents with reconciliation evidence and a cleared-funds date. MetaApi
+observations, paper results, unrealized profits, and unsettled statements do not
+credit earnings or advance a tier.
+
+The threshold-crossing receipt uses the tier earned **before that receipt**. A
+first $10,000 qualifying receipt therefore allocates $5,000 to the trader and
+$5,000 to the company; the next eligible receipt uses 60%. Posted distributions are
+immutable and are not recalculated. Qualifying net receipts aggregate across all
+eligible sponsored accounts in the continuous contractual relationship. Earned
+tiers are retained across new accounts, approved firm changes, ordinary losses,
+and evaluation failures. Closing an account does not close that relationship.
+
+The company calculates entitlement and must initiate payment within three business
+days after cleared receipt. Operational deadlines count Monday–Friday in
+Africa/Lagos. Statements show the received qualifying amount, applied tier,
+trader/company entitlements, and updated cumulative qualifying net payouts.
+Payment initiation and final external payment are distinct recorded events. The
+website does not purchase prop accounts, initiate a bank transfer, or independently
+prove that staff evidence is genuine.
+
+Existing fixed-share sponsored records remain bound to their original signed
+terms. Legacy `cumulative_high_water` and `settled_period` statements remain
+immutable; they are not converted into cleared progressive receipts or silently
+recalculated. A new agreement never supplies a trader's signature. Higher earned
+tiers cannot be unilaterally reduced in an active relationship. Termination leaves
+accrued unpaid entitlements payable; reinstatement or new sponsorship after
+termination needs an express written tier determination before it begins.
+
+The admin can prepare a reinstatement document containing the exact supplied
+section plus the previous relationship, written reference, selected 50%/60%/70%
+starting tier, and an explicit new-relationship cumulative total. Preparation is
+not publication or consent. Publish that version **privately to the named
+Fundraiser**, obtain their personal electronic signature, approve that exact
+version, then record reinstatement. A staff checkbox alone cannot substitute for
+that signature. Personal versions never replace the standard agreement for other
+members, and mismatched or missing recipients are rejected. The automated model
+supports the standard tiers; nonstandard written exceptions require a separately
+reviewed implementation and are never silently converted.
+
+Your private Academy title is your registered **first name + Fundraiser**;
+compound first names remain intact. Public rankings retain the public alias you
+chose to share, followed by Fundraiser. Registration, legal signatures, and
+certificate-name choices are stored independently from these display titles.
+
+Requested and approved payouts reserve available recorded trader earnings;
+rejection releases the reservation. Recording external payment requires its real
+reference. Keep settled evidence and the private database on durable storage.
+See `/profit-sharing.html` for the public summary and DEPLOYMENT.md for operation.
 
 ### Personal account controls and payout requests
 
@@ -297,8 +339,12 @@ recovered copy.
 
 After a server-confirmed assessment pass, the dashboard and certificates page
 show the required next step at `contract.html`. Returning passed challengers
-who have not signed are directed there after login. Until the company supplies
-an agreement, the page shows **Agreement pending** and signing is unavailable.
+who have not signed are directed there after login. The company-provided revised
+section is included in `agreements/progressive-profit-sharing-v1.txt` and published
+idempotently on startup as `progressive-profit-sharing-v1`. It contains the exact
+supplied ten clauses; it is a section rather than invented additional contract
+terms. An existing later active publication is not reactivated by repeated startup.
+New versions require explicit trader consent and never alter previous signatures.
 
 An operator can publish the company-provided PDF or UTF-8 `.txt` file, up to
 10 MB, after the server has initialized its database:
@@ -321,8 +367,10 @@ new version requires a new signature and keeps previous signed agreements
 accessible. Only signed challengers have `canProceedToFundingReview: true`;
 funding approval and account provisioning still need the company's review.
 
-The contract terms have not been supplied. This workflow records typed electronic
-signatures; it does not use an external identity-verification or signing provider.
+The supplied progressive profit-sharing section is the authorized source for this
+release. Other company legal details and any additional agreement provisions still
+need company authorization. This workflow records typed electronic signatures;
+it does not use an external identity-verification or signing provider.
 
 The Node.js HTTP server serves the website and JSON API. `backend.mjs` implements
 registration/login/logout, salted scrypt password hashes, hashed session tokens,
@@ -519,14 +567,18 @@ desktop/mobile layouts. Records and reference-price execution are server-control
 practice passing does not approve real funding. A real qualification program needs
 reviewer tools and finalized evaluation terms.
 
+Public profit-sharing terms and examples are available at `/profit-sharing.html`.
+
 Brand assets include `public/logo.svg`, `public/logo-mark.svg`, gold and print
 variants, plus the official black/gold identity board and social avatar in
 `public/assets/`.
 `ACADEMY_PLAYBOOK.md` contains positioning, social copy, operating workflow,
 qualification criteria to finalize, and a trader agreement brief.
 
-Profit splits, qualification thresholds, partner firms, account sizes, and launch
-dates remain to be finalized. The website is not a live funding platform.
+The revised progressive profit-sharing terms and simulator thresholds are
+published. Partner firms, account sizes, eligible regions, formal intake details,
+and launch dates still need company decisions. The website records sponsored
+operations; it does not itself issue accounts or transfer funds.
 
 ## Completion certificates
 
@@ -662,8 +714,10 @@ A Support button opens the customer conversation from site pages. Public visitor
 can read basic company answers; signed-in clients, including clients waiting for
 email confirmation, can save a conversation and request an agent. The assistant
 covers the published model, assessment limits, registration, certificates, and
-required agreement. Unpublished profit splits, account sizes, partner lists, and
-individual sponsorship decisions are referred to staff.
+required agreement, published 50%/60%/70% profit tiers, next-receipt advancement,
+continuous tier retention, qualifying cleared receipts, and the three-business-day
+payment-initiation obligation. Unpublished account sizes, partner lists, and
+individual sponsorship or payment decisions are referred to staff.
 
 Set `SUPPORT_AI_API_KEY` in secure server settings for generative OpenAI replies.
 `SUPPORT_AI_MODEL` defaults to `gpt-4.1-mini`. The key stays on the server; only

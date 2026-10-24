@@ -68,12 +68,18 @@ when the preview is no longer needed.
 The laptop ZIP is in `downloads/fundraiserAcademy-laptop.zip`; it includes the
 website and backend but excludes user databases and credentials.
 
-The agreement page is ready, but no contract has been supplied. When the company
-provides it, publish the PDF or UTF-8 text privately using the command in README.md.
-For services without an interactive shell, set `CONTRACT_FILE` to a private file
-included in the deployment, plus `CONTRACT_VERSION` and optional `CONTRACT_TITLE`.
-Keep personal completed contracts out of Git and out of `public/`. Free preview
-storage cannot preserve signatures reliably; use a persistent disk for real signing.
+The company-provided revised section is bundled privately at
+`agreements/progressive-profit-sharing-v1.txt` and published idempotently on startup.
+It supplies the exact progressive-sharing and tier-retention clauses, without
+inventing other legal provisions. A new revision requires a trader's explicit
+signature after qualification. Existing documents and signatures stay immutable;
+startup must not reactivate this revision over a later company publication.
+
+For later company-approved revisions, publish the PDF or UTF-8 text from the admin
+console or `contract:publish`. For services without a shell, set `CONTRACT_FILE`,
+`CONTRACT_VERSION`, and optional `CONTRACT_TITLE` to the actual private document.
+Keep personal completed contracts out of Git and `public/`. Free preview storage
+cannot preserve signatures reliably; use a persistent disk for real signing.
 
 This app needs a Node.js backend. Static hosting and the VS Code Live Server
 extension cannot run registration, saved trading records, certificates, or delivery.
@@ -173,10 +179,47 @@ Publish only the company-provided PDF or UTF-8 text agreement from the console o
 the existing `contract:publish` command. A new active version requires a new
 trader signature and a current review. Do not publish test terms on the real site.
 Record external sponsored accounts only after review approval and verification
-of the actual account evidence. Select the exact agreed profit split and either
-cumulative-high-water or externally settled-period sharing. Payout actions record
-and reserve ledger amounts; they do not contact a bank, issue a prop account, or
-prove that a payment took place.
+of the actual account evidence. New accounts under the supplied progressive
+section use the company's 50%/60%/70% structure; staff cannot choose an arbitrary
+standard split. Record only eligible prop payouts actually received and cleared by
+the company, after firm deductions and agreed transaction charges. Equity feeds
+and unsettled statements never establish qualifying receipts. Use USD cents and
+real evidence; review duplicates before submitting immutable entries.
+
+The threshold-crossing receipt uses the pre-receipt tier. The next eligible
+receipt gets the upgrade. Aggregate receipts across eligible accounts in the
+continuous relationship; closing or replacing an account does not reset it.
+Ordinary losses and failures do not create a debt owed by the trader.
+
+Existing fixed-share account terms and legacy statements remain intact. They
+cannot be retroactively converted or silently reduced. Staff must document any
+required contractual adoption or reinstatement terms before new sponsorship,
+including treatment of the previously earned tier. Termination leaves accrued
+unpaid shares payable under the agreement.
+
+For reinstatement, use the Fundraiser's admin profile to prepare the private
+reinstatement agreement with an explicit starting tier and written reference.
+Publish the prepared, unchanged document to **that Fundraiser's client ID only**,
+then have the Fundraiser read and personally sign it and obtain a new sponsorship
+review. Only afterward record reinstatement with the same reference and tier.
+The backend verifies the exact signed document, recipient, and termination basis;
+an administrative consent checkbox is insufficient. Publishing a personal
+agreement does not replace the standard agreement or invalidate other members'
+reviews. The trusted CLI supports `--recipient-user-id CLIENT_ID` for personal
+publication; generic publication remains for actual company-wide terms.
+
+The standard automated schedule implements 50%/60%/70%. Existing nonstandard
+fixed shares are preserved; a custom written exception needs a separately
+reviewed financial model before automatic adoption. Do not enter a false cleared
+funds date to import cash received before the recorded relationship began.
+
+For every cleared receipt, review the payout statement and three-business-day
+payment-initiation deadline. Operational counting uses Monday–Friday in
+Africa/Lagos. Record real initiation evidence separately from final external
+payment. Monitor outstanding entitlements even if the client has not requested a
+withdrawal. Operations flags overdue receipt entitlements and the original
+initiation deadline survives partial reservations, rejection, and re-request. Payout actions reserve or record ledger amounts; they do not contact a
+bank, issue a prop account, or prove that a payment took place.
 
 Keep the private database and keys on persistent storage before collecting lasting
 admin decisions, signatures, or financial records. The free preview remains

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { contractConsentStatement } from './contracts.mjs';
+import { contractConsentStatement,requiredContractDocument } from './contracts.mjs';
 
 export class LeaderboardError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -42,7 +42,7 @@ export function createLeaderboard(db, { now = Date.now } = {}) {
     alias_key TEXT UNIQUE,
     updated_at INTEGER NOT NULL
   );`);
-  const active = () => db.prepare('SELECT d.id,d.version,d.hash,d.published_at FROM active_contract a JOIN contract_documents d ON d.id=a.contract_id WHERE a.singleton=1').get();
+  const active = userId => requiredContractDocument(db,userId);
   const signatureFor = (userId, documentId) => db.prepare(`SELECT s.contract_version,s.contract_hash,s.consent_statement,s.signed_at,
       c.user_id AS certificate_owner,c.initial_balance,c.final_balance,c.profit_percent,c.trading_days,c.issued_at,c.price_mode
     FROM contract_signatures s LEFT JOIN certificates c ON c.id=s.certificate_id
@@ -59,7 +59,7 @@ export function createLeaderboard(db, { now = Date.now } = {}) {
     return result;
   }
 
-  function eligibility(userId, document = active()) {
+  function eligibility(userId, document = active(userId)) {
     const results = db.prepare('SELECT * FROM certificates WHERE user_id=?').all(userId);
     const passed = results.some(row => qualifyingResult(row));
     if (!passed) return { eligible: false, status: 'assessment_required' };
@@ -71,11 +71,11 @@ export function createLeaderboard(db, { now = Date.now } = {}) {
   }
 
   function rankedEntries() {
-    const document = active();
-    if (!document) return [];
     const rows = db.prepare('SELECT user_id,public_id,alias FROM leaderboard_profiles WHERE enabled=1').all();
     const entries = [];
     for (const profile of rows) {
+      const document=active(profile.user_id);
+      if(!document)continue;
       const result = signedResult(profile.user_id, document);
       if (!result) continue;
       entries.push({ userId: profile.user_id, publicEntryId: profile.public_id, displayAlias: profile.alias, ...result });

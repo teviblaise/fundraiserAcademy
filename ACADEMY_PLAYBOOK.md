@@ -30,8 +30,11 @@ terms. Program launch details coming soon.
 Fundraiser Academy is building a free qualification program for traders who can
 already trade but need capital to scale. Selected traders will receive accounts
 from third-party prop firms, sponsored by us. Profits will be shared under a
-written agreement, and we will bear covered trading losses. Qualification criteria,
-profit-sharing terms, and application dates will be announced before enrollment.
+written agreement, starting at 50% to the trader and progressing to 60% and 70%
+through cleared qualifying payouts. Earned tiers follow eligible sponsored
+accounts during the continuous contractual relationship. The company bears agreed
+evaluation costs and ordinary permitted trading losses. Formal intake dates and
+provider eligibility details will be announced before enrollment.
 
 ## Proposed operating workflow
 
@@ -61,15 +64,52 @@ drawdown from starting balance, 5% daily drawdown from UTC day-start equity,
 and fills on at least 3 distinct UTC trading days. Passing requires no open
 positions. These assessment rules do not set a sponsored firm's account rules.
 
-## Trader agreement brief
+## Supplied profit-sharing section
 
-Have the final agreement specify:
+The company supplied the ten-clause revised section in
+`agreements/progressive-profit-sharing-v1.txt`. The application publishes it
+idempotently as `progressive-profit-sharing-v1`; qualified traders must explicitly
+read and sign the current document. Existing immutable versions and signatures
+are preserved, and startup does not reactivate a superseded revision.
+
+Newly admitted traders start at 50% trader / 50% company. Cumulative qualifying
+net payouts of $10,000 unlock 60% / 40%; $25,000 unlocks 70% / 30%. The receipt
+that reaches a threshold uses the pre-receipt tier; the NEXT eligible receipt
+uses the upgrade. No earlier payout is recalculated. Qualifying amounts are
+actually received and cleared company funds from the prop firm after that firm's
+deductions and agreed third-party transaction charges, before distribution.
+Unrealized equity, deposits, demo results, and unsettled statements do not count.
+
+Aggregate across all eligible sponsored accounts during the continuous
+contractual relationship. New accounts, approved prop-firm changes, ordinary
+losses and evaluation failures do not reduce earned tiers. The company cannot
+unilaterally reduce an earned tier; both parties must agree in writing to a
+change. The standard maximum is 70% unless both parties agree otherwise in
+writing. Termination leaves accrued unpaid entitlements payable. Tier treatment
+on reinstatement or a new agreement must be expressly written before new
+sponsorship begins; neither automatic reset nor post-termination retention is
+promised.
+
+Initiate payment within three business days after cleared receipt. Operational
+counting uses Monday-Friday in Africa/Lagos. Supply a statement showing received
+qualifying funds, applied tier, both entitlements and updated cumulative total.
+Track initiation separately from final external payment and do not wait for a
+client request before monitoring that obligation. The company bears agreed
+evaluation costs and ordinary evaluation failures or losses from permitted
+trading. Fraud, deliberate misconduct and material breaches remain subject to
+applicable law and express contractual remedies. Follow prop-firm rules and all
+required authorizations; prohibited account control/sharing is not allowed.
+
+## Additional agreement details still needed
+
+The supplied section does not invent the company's remaining legal details.
+Before broader operations, the company must specify:
 
 - Legal company identity and trader eligibility/jurisdiction.
 - Selected prop firm, account type, ownership, permitted access, and applicable rules.
 - No participation fee and which costs Fundraiser Academy pays.
-- Exact profit split, whether it applies before or after firm deductions,
-  payout schedule, currency, withdrawal conditions, and applicable taxes.
+- Any additional withdrawal conditions, tax handling, payment method and permitted
+  charges consistent with the supplied section and written individual terms.
 - Covered trading losses borne by the company, account closure triggers,
   treatment of rule violations, and any replacement-account policy.
 - Data handling, reporting obligations, dispute process, and termination.
@@ -79,7 +119,7 @@ Do not present this brief as a signed or legally reviewed contract.
 ## Launch decisions still needed
 
 - Final qualification rubric, prohibited practices, and review/appeal procedure.
-- Profit split and payout mechanics.
+- External payment execution, settlement reconciliation and applicable tax handling.
 - Partner firm(s), permitted sponsorship arrangements, account sizes, and markets.
 - Eligibility regions/age, available sponsorship budget, and cohort capacity.
 - Company contact details, legal identity, privacy policy, and final trader agreement.
@@ -112,7 +152,7 @@ establish live account performance. Intraday forex requires Twelve Data
 configuration; daily ECB closes are display-only. Earlier price-model attempts
 are retained until an explicit reset.
 
-Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. Until the document is supplied, the agreement remains pending. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
+Passed practice attempts earn completion certificates, with a registered-name or nickname display preference. This does not authorize funding. Challengers must next sign the company-provided trader agreement with their full legal name before sponsorship review can proceed. The supplied revised section is available for explicit signature after qualification. Each signature records the exact document version and hash; new versions require fresh signatures and preserve history. Email and background push are implemented but need verified sender credentials, network access, and HTTPS hosting for live validation.
 
 ### Account security
 
@@ -155,14 +195,14 @@ require a fresh review; a passed challenge or signed agreement alone does not
 approve funding. Publish the actual company agreement, never substitute test
 terms or an assistant-written contract for it.
 
-External sponsored-account records require a current approved review. Enter
-verified firm/account evidence, account size, exact trader share, and the actual
-agreement's profit-sharing policy. Cumulative-high-water sharing allocates only
-new cumulative profit highs after losses are recovered. Settled-period sharing
-allocates positive externally settled periods independently and requires an
-explicit settlement confirmation with nonoverlapping period dates. Losses never
-create a negative trader share. Account terms and posted statements are immutable;
-do not use either policy until its treatment matches the signed agreement.
+External sponsored-account records require a current approved review and verified
+firm/account evidence. The supplied progressive agreement controls new standard
+accounts. Record eligible cleared company receipts with the signed terms and
+relationship continuity; verify the existing tier before each immutable split.
+Keep old fixed-share terms and legacy cumulative-high-water/settled-period
+statements intact. A new revision never retroactively converts old statements,
+reduces earned shares, or supplies an existing trader's consent. Losses do not
+create negative trader entitlements.
 
 Payout requests and approvals reserve available recorded trader earnings;
 rejection releases the reservation. An approved payout can be marked paid only
@@ -278,3 +318,21 @@ a protected offsite backup/latest-deletion-ledger process, a separately preserve
 key, and an independently tested disaster-recovery procedure before relying on
 lasting company records. Finalize retention/deletion rules and access reviews.
 See DEPLOYMENT.md for the exact supported commands and current limitations.
+
+## Fundraiser titles and private reinstatement
+
+Use each member's registered first name followed by Fundraiser in private
+Academy greetings and profile titles. Preserve compound first names. Public
+rankings use the chosen, opted-in alias with the title; do not publish registered
+first names automatically. Legal signatures and certificate-name choices remain
+independent.
+
+A returning Fundraiser needs a prepared private reinstatement agreement that
+states the former relationship, written reference, and explicitly selected
+starting tier. Publish it only to that client, obtain their actual signature and
+a new sponsorship approval, then record reinstatement against those same terms.
+Preparation and a staff checkbox supply no consent. Keep the standard agreement
+and unrelated members' reviews independent. Previously accrued entitlements stay
+payable, including late cleared receipts assigned to the terminated relationship.
+The original cleared-receipt deadline remains after a partial request or retry;
+Operations highlights overdue payment initiation.

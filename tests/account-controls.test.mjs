@@ -15,10 +15,12 @@ import {createPerformanceReports} from '../performance-reports.mjs';
 import {createSponsoredSync} from '../sponsored-sync.mjs';
 import {createAccountControls,applyAccountDeletionLedger} from '../account-controls.mjs';
 import {createAccount} from '../public/simulator.js';
+import {installProvidedAgreement} from '../agreement.mjs';
 
 const time=Date.UTC(2026,9,22,10),confirmation={confirmation:'DELETE MY ACCOUNT'};
 const hash=value=>createHash('sha256').update(value).digest('hex');
 function fixture(){
+ let clock=time;
  const db=new DatabaseSync(':memory:');
  db.exec(`PRAGMA foreign_keys=ON;
  CREATE TABLE users(id INTEGER PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,market TEXT NOT NULL,password TEXT NOT NULL,created_at INTEGER NOT NULL,first_name TEXT NOT NULL DEFAULT '',other_names TEXT NOT NULL DEFAULT '',email_confirmation_required INTEGER NOT NULL DEFAULT 0);
@@ -36,21 +38,31 @@ function fixture(){
  (3,'other@example.com','Other Customer','I trade crypto','other-private-password-hash',3,'Other','Customer'),
  (4,'reviewer@example.com','Former Reviewer','I trade both','reviewer-private-password-hash',4,'Former','Reviewer');
  INSERT INTO notification_preferences VALUES(1,0,1),(2,1,1),(3,0,1),(4,0,1);`);
- const sessions=createSessions(db,{now:()=>time});
- createTwoFactor(db,'/tmp/unused-controls.sqlite',{now:()=>time,encryptionKey:Buffer.alloc(32,7).toString('base64')});
+ const sessions=createSessions(db,{now:()=>clock});
+ createTwoFactor(db,'/tmp/unused-controls.sqlite',{now:()=>clock,encryptionKey:Buffer.alloc(32,7).toString('base64')});
  for(const id of [1,2,3,4])db.prepare('INSERT INTO two_factor(user_id,secret,enabled_at) VALUES (?,?,?)').run(id,`private-factor-secret-${id}`,time);
- const certificates=createCertificates(db),contracts=createContracts(db),leaderboard=createLeaderboard(db,{now:()=>time});
+ const certificates=createCertificates(db),contracts=createContracts(db),leaderboard=createLeaderboard(db,{now:()=>clock});
  initializeSupportSchema(db);
- const access=createAdminAccess(db,{now:()=>time,ownerEmails:'owner@example.com'});
- const workflows=createAdminWorkflows(db,{access,contracts,leaderboard,now:()=>time});
+ const access=createAdminAccess(db,{now:()=>clock,ownerEmails:'owner@example.com'});
+ const workflows=createAdminWorkflows(db,{access,contracts,leaderboard,now:()=>clock});
  const approval={userId:2,reviewId:randomUUID(),reviewRevision:1,certificateId:randomUUID(),contractId:randomUUID(),contractVersion:'fixture-v1',contractHash:'a'.repeat(64),signatureId:randomUUID()};
- const finance=createAdminFinance(db,{access,now:()=>time,workflows:{requireApproved(id){assert.equal(id,2);return {...approval};}}});
- createPerformanceReports(db,{now:()=>time});
+ const approvals=new Map([[2,approval]]);
+ const finance=createAdminFinance(db,{access,now:()=>clock,workflows:{requireApproved(id){const approved=approvals.get(id);assert.ok(approved,'a fixture sponsorship approval is required');return {...approved};}}});
+ createPerformanceReports(db,{now:()=>clock});
  let failClosedAudit=false;
  const guarded={context:access.context,audit(...args){if(failClosedAudit&&args[1]==='account.closed')throw new Error('Isolated audit failure');return access.audit(...args);}};
- const controls=createAccountControls(db,{access:guarded,now:()=>time});
+ const controls=createAccountControls(db,{access:guarded,now:()=>clock});
  for(const id of [1,2,3,4])db.prepare('INSERT INTO accounts(user_id,state) VALUES (?,?)').run(id,JSON.stringify(createAccount(time)));
- function allocation(){return finance.createAccount(1,{userId:2,firmName:'Fixture Prop Firm',label:'Fixture external allocation',accountSizeCents:1000000,traderShareBps:7000,profitSharingPolicy:'cumulative_high_water',evidence:'Isolated external receipt reference',reason:'Record an isolated allocation'}).account;}
+ function allocation(overrides={}){return finance.createAccount(1,{userId:2,firmName:'Fixture Prop Firm',label:'Fixture external allocation',accountSizeCents:1000000,traderShareBps:7000,profitSharingPolicy:'cumulative_high_water',evidence:'Isolated external receipt reference',reason:'Record an isolated allocation',...overrides}).account;}
+ function progressiveAllocation(userId=2,overrides={}){
+  const state=createAccount(clock);state.balance=11000;state.locked='Profit target achieved';state.tradingDays=['2026-10-19','2026-10-20','2026-10-21'];
+  const certificate=certificates.issue(userId,state,clock);
+  const document=installProvidedAgreement(contracts,{now:clock});
+  const signed=contracts.sign(userId,{contractId:document.id,contractVersion:document.version,contractHash:document.hash,legalName:userId===2?'Ada Legal Trader':'Other Legal Trader',consent:true},clock);
+  const revised={...approval,userId,certificateId:certificate?.id??signed.signature.certificateId,contractId:document.id,contractVersion:document.version,contractHash:document.hash,signatureId:signed.signature.id};
+  if(userId===2)Object.assign(approval,revised);else approvals.set(userId,revised);
+  return allocation({userId,label:`Progressive allocation ${userId}`,traderShareBps:5000,profitSharingPolicy:'progressive_cleared',...overrides});
+ }
  function seedPrivate(){
   const own='22222222-2222-4222-8222-222222222222',other='33333333-3333-4333-8333-333333333333';
   db.prepare('INSERT INTO support_conversations(id,owner_user_id,status,created_at,updated_at) VALUES (?,2,\'ai\',?,?),(?,3,\'ai\',?,?)').run(own,time,time,other,time,time);
@@ -71,7 +83,7 @@ function fixture(){
   const point=JSON.stringify({time,balance:10000,equity:10000});db.prepare('INSERT INTO performance_assessment_snapshots VALUES (2,\'attempt\',?,?,?,?,?)').run(time,point,point,point,point);
   return {own,other};
  }
- return {db,access,workflows,controls,finance,certificates,contracts,sessions,allocation,seedPrivate,approval,failAudit(value){failClosedAudit=value;},close(){db.close();}};
+ return {db,access,workflows,controls,finance,certificates,contracts,sessions,allocation,progressiveAllocation,seedPrivate,approval,advance(ms){clock+=ms;},time:()=>clock,failAudit(value){failClosedAudit=value;},close(){db.close();}};
 }
 
 test('personal export uses allowlisted own records and never exports authentication, delivery secrets, staff identities, or internal notes',()=>{
@@ -139,6 +151,111 @@ test('open allocations and unsettled profit prevent closure; pending users can r
  }finally{app.close();}
 });
 
+test('progressive receipts and continuous contractual rights block closure until explicitly terminated and fully paid',()=>{
+ const app=fixture();try{
+  app.seedPrivate();const account=app.progressiveAllocation();
+  const received=app.finance.recordClearedReceipt(1,account.id,{amountReceivedCents:1000000,externalReference:'private-bank-cleared-001',clearedAt:app.time(),evidence:'Private bank reconciliation evidence',reason:'Record actual cleared firm payout'});
+  assert.equal(received.receipt.traderShareCents,500000);assert.equal(received.progression.currentTraderShareBps,6000);
+  app.finance.updateAccount(1,account.id,{status:'closed',revision:account.revision,reason:'Close the external sponsored account'});
+  let pending=app.controls.requestDeletion(2,confirmation);
+  assert.equal(pending.status,'pending_closure');assert.equal(pending.signedOut,false);
+  assert.ok(pending.blockers.some(item=>item.code==='PROGRESSIVE_RELATIONSHIP_ACTIVE'));
+  assert.ok(pending.blockers.some(item=>item.code==='EARNED_SHARE_UNSETTLED'));
+  const ownAccount=app.controls.exportData(2).sections.sponsoredAccounts.items[0];assert.equal(ownAccount.profitSharingPolicy,'progressive_cleared');assert.equal(ownAccount.recordedTraderShareBps,5000);assert.equal(ownAccount.traderShareBps,6000);assert.equal(ownAccount.currentTraderShareBps,6000);
+  assert.equal(app.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=2').get().n,1);
+  app.finance.updateRelationship(1,2,{action:'terminate',revision:received.progression.revision,reason:'End the contractual relationship before requested closure'});
+  const request=app.finance.createClientPayout(2,{accountId:account.id,amountCents:500000,idempotencyKey:randomUUID()});
+  const approved=app.finance.updatePayout(1,request.payout.id,{status:'approved',revision:request.payout.revision,reason:'Approve cleared earned share for external payment'});
+  const initiated=app.finance.initiatePayout(1,request.payout.id,{revision:approved.payout.revision,externalInitiationReference:'private-bank-initiation-001',reason:'Record actual external payment initiation'});
+  pending=app.controls.completeDeletion(2);assert.equal(pending.status,'pending_closure');assert.ok(pending.blockers.some(item=>item.code==='PAYOUT_PENDING'));assert.ok(pending.blockers.some(item=>item.code==='EARNED_SHARE_UNSETTLED'));
+  app.finance.updatePayout(1,request.payout.id,{status:'paid',revision:initiated.payout.revision,externalPaymentReference:'private-bank-payment-001',reason:'Record completed external payment'});
+  const snapshot=Object.fromEntries(['progressive_relationships','progressive_account_links','progressive_receipts','progressive_payout_allocations','progressive_payout_initiations','progressive_relationship_events'].map(table=>[table,app.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+  const financialCount=Object.values(snapshot).reduce((count,rows)=>count+rows.length,0)+['sponsored_accounts','sponsored_statements','sponsored_payouts','sponsored_client_payout_requests'].reduce((count,table)=>count+app.db.prepare(`SELECT count(*) n FROM ${table} WHERE user_id=2`).get().n,0)+app.db.prepare('SELECT count(*) n FROM sponsored_payout_events WHERE payout_id=?').get(request.payout.id).n;
+  const completed=app.controls.completeDeletion(2);assert.equal(completed.status,'deleted');assert.equal(completed.signedOut,true);
+  assert.equal(completed.retained.find(item=>item.category==='financial_records').recordCount,financialCount);
+  assert.doesNotMatch(JSON.stringify(completed),/private-bank|Private bank|Ada Legal Trader/);
+  for(const [table,rows]of Object.entries(snapshot))assert.deepEqual(app.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),rows,table);
+  assert.equal(app.db.prepare('SELECT current_tier_bps,status FROM progressive_relationships WHERE user_id=2').get().current_tier_bps,6000);
+  assert.equal(app.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=2').get().n,0);assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
+  for(const table of ['progressive_receipts','progressive_payout_allocations','progressive_payout_initiations','progressive_relationship_events'])assert.throws(()=>app.db.exec(`DELETE FROM ${table}`),/immutable/,table);
+ }finally{app.close();}
+});
+
+test('an active progressive relationship alone prevents implicit loss of retained tier rights during deletion',()=>{
+ const app=fixture();try{
+  const account=app.progressiveAllocation();app.finance.updateAccount(1,account.id,{status:'closed',revision:account.revision,reason:'Close the account without ending sponsorship'});
+  const pending=app.controls.requestDeletion(2,confirmation);assert.equal(pending.status,'pending_closure');assert.deepEqual(pending.blockers.map(item=>item.code),['PROGRESSIVE_RELATIONSHIP_ACTIVE']);
+  const relation=app.finance.profitSharing(2).progression;app.finance.updateRelationship(1,2,{action:'terminate',revision:relation.revision,reason:'Formally end the sponsored contractual relationship'});
+  assert.equal(app.controls.completeDeletion(2).status,'deleted');
+ }finally{app.close();}
+});
+
+test('late cleared funds remain payable from retained records without restoring a closed customer profile',()=>{
+ const app=fixture();try{
+  const account=app.progressiveAllocation();app.finance.updateAccount(1,account.id,{status:'closed',revision:account.revision,reason:'Close the sponsored allocation'});
+  app.finance.updateRelationship(1,2,{action:'terminate',revision:app.finance.profitSharing(2).progression.revision,reason:'End the sponsored contractual relationship'});
+  assert.equal(app.controls.requestDeletion(2,confirmation).status,'deleted');const user=app.db.prepare('SELECT name,email,password FROM users WHERE id=2').get();
+  app.advance(60000);
+  const receipt=app.finance.recordClearedReceipt(1,account.id,{amountReceivedCents:10000,externalReference:'late-external-bank-receipt',clearedAt:app.time(),evidence:'Firm payout cleared after account closure',reason:'Preserve the company obligation for late cleared funds'});
+  assert.equal(receipt.receipt.traderShareCents,5000);assert.equal(receipt.progression.status,'terminated');
+  assert.equal(app.controls.isDeleted(2),true);assert.deepEqual(app.db.prepare('SELECT name,email,password FROM users WHERE id=2').get(),user);
+  assert.throws(()=>app.finance.createClientPayout(2,{accountId:account.id,amountCents:5000,idempotencyKey:randomUUID()}),error=>error.status===403);
+  const requested=app.finance.createPayout(1,{accountId:account.id,amountCents:5000,reason:'Reserve late accrued entitlement for external settlement'});
+  const approved=app.finance.updatePayout(1,requested.payout.id,{status:'approved',revision:requested.payout.revision,reason:'Approve manual settlement from retained financial records'});
+  const initiated=app.finance.initiatePayout(1,requested.payout.id,{revision:approved.payout.revision,externalInitiationReference:'late-closed-customer-initiation',reason:'Record actual initiation to the former customer'});
+  app.finance.updatePayout(1,requested.payout.id,{status:'paid',revision:initiated.payout.revision,externalPaymentReference:'late-closed-customer-completion',reason:'Record external completion of accrued entitlement'});
+  assert.equal(app.finance.accountDetail(account.id).account.availableCents,0);assert.equal(app.finance.accountDetail(account.id).account.paidCents,5000);
+  assert.equal(app.controls.isDeleted(2),true);assert.equal(app.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=2').get().n,0);assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
+ }finally{app.close();}
+});
+
+test('own exports fully page progressive statements, relationships and payment evidence without leaking internal data',()=>{
+ const app=fixture();try{
+  const account=app.progressiveAllocation(),other=app.progressiveAllocation(3);const receiptIds=[];
+  for(let index=0;index<3;index++){
+   const recorded=app.finance.recordClearedReceipt(1,account.id,{amountReceivedCents:11000,thirdPartyChargesCents:1000,externalReference:`PRIVATE_COMPANY_BANK_RECEIPT_${index}`,chargesAgreementReference:'PRIVATE_FEE_AGREEMENT_REFERENCE',clearedAt:app.time(),evidence:'PRIVATE_FINANCE_RECONCILIATION_NOTES',reason:'Record reconciled cleared funds'});receiptIds.push(recorded.receipt.id);
+  }
+  app.finance.recordClearedReceipt(1,other.id,{amountReceivedCents:99000,externalReference:'OTHER_CUSTOMER_BANK_RECEIPT',clearedAt:app.time(),evidence:'OTHER_CUSTOMER_PRIVATE_EVIDENCE',reason:'Record other customer cleared funds'});
+  const requested=app.finance.createClientPayout(2,{accountId:account.id,amountCents:15000,idempotencyKey:randomUUID()});
+  const approved=app.finance.updatePayout(1,requested.payout.id,{status:'approved',revision:requested.payout.revision,reason:'PRIVATE_STAFF_APPROVAL_REASON'});
+  app.finance.initiatePayout(1,requested.payout.id,{revision:approved.payout.revision,externalInitiationReference:'PRIVATE_BANK_INITIATION_REFERENCE',reason:'PRIVATE_STAFF_INITIATION_REASON'});
+  app.finance.updateAccount(1,account.id,{status:'closed',revision:account.revision,reason:'Close the sponsored account for contract termination'});
+  app.finance.updateRelationship(1,2,{action:'terminate',revision:app.finance.profitSharing(2).progression.revision,reason:'PRIVATE_RELATIONSHIP_TERMINATION_REASON'});
+  const collected={},pages=[];let offset=0,fingerprint;
+  for(let n=0;n<20;n++){
+   const page=app.controls.exportData(2,{limit:1,offset,...(fingerprint?{fingerprint}:{})});fingerprint??=page.fingerprint;assert.equal(page.fingerprint,fingerprint);pages.push(page);
+   for(const [name,section]of Object.entries(page.sections)){collected[name]??=[];collected[name].push(...section.items);}
+   if(page.complete){assert.equal(page.nextOffset,null);break;}offset=page.nextOffset;
+  }
+  assert.equal(pages.at(-1).complete,true);assert.deepEqual(collected.qualifyingPayoutReceipts.map(row=>row.id),receiptIds);
+  assert.equal(collected.profitSharingRelationships.length,1);assert.equal(collected.profitSharingRelationships[0].status,'terminated');
+  assert.equal(collected.profitSharingAccountLinks.length,1);assert.equal(collected.payoutReceiptAllocations.length,3);assert.equal(collected.paymentInitiations.length,1);assert.equal(collected.profitSharingHistory.length,1);
+  const exportedAccount=collected.sponsoredAccounts[0];assert.equal(exportedAccount.sharingModel,'progressive_cleared');assert.equal(exportedAccount.profitSharingPolicy,'progressive_cleared');assert.equal(exportedAccount.recordedTraderShareBps,5000);
+  for(const receipt of collected.qualifyingPayoutReceipts){assert.equal(receipt.amountReceivedCents-receipt.thirdPartyChargesCents,receipt.qualifyingNetPayoutCents);assert.equal(receipt.traderShareCents+receipt.companyShareCents,receipt.qualifyingNetPayoutCents);assert.equal(receipt.appliedTraderShareBps,5000);assert.ok(Number.isSafeInteger(receipt.initiationDueAt));}
+  const serialized=JSON.stringify(pages);for(const secret of ['PRIVATE_COMPANY_BANK','PRIVATE_FEE_AGREEMENT','PRIVATE_FINANCE','PRIVATE_STAFF','PRIVATE_BANK_INITIATION','PRIVATE_RELATIONSHIP','OTHER_CUSTOMER','owner@example.com','created_by','actor_user_id','written_agreement_reference'])assert.ok(!serialized.includes(secret),secret);
+  app.finance.recordClearedReceipt(1,other.id,{amountReceivedCents:1,externalReference:'another-other-customer-receipt',clearedAt:app.time(),evidence:'Other private reconciliation',reason:'Record another actual receipt'});
+  assert.equal(app.controls.exportData(2,{limit:1,offset:1,fingerprint}).fingerprint,fingerprint,'another customer cannot invalidate this account’s export');
+  app.finance.recordClearedReceipt(1,account.id,{amountReceivedCents:1,externalReference:'later-owned-receipt',clearedAt:app.time(),evidence:'Owned reconciliation record',reason:'Record another actual receipt'});
+  assert.throws(()=>app.controls.exportData(2,{limit:1,offset:1,fingerprint}),error=>error.code==='ACCOUNT_EXPORT_CHANGED');
+ }finally{app.close();}
+});
+
+test('a newer deletion ledger preserves progressive legal records without resurrecting an old profile',()=>{
+ const app=fixture();try{
+  const account=app.progressiveAllocation();app.finance.updateAccount(1,account.id,{status:'closed',revision:account.revision,reason:'Close the sponsored allocation'});
+  app.finance.updateRelationship(1,2,{action:'terminate',revision:app.finance.profitSharing(2).progression.revision,reason:'Formally end the sponsored relationship'});
+  app.controls.requestDeletion(2,confirmation);const ledger=app.controls.exportDeletionLedger();
+  const relationships=app.db.prepare('SELECT * FROM progressive_relationships').all(),signatures=app.db.prepare('SELECT * FROM contract_signatures WHERE user_id=2').all();
+  app.db.prepare("UPDATE users SET email='resurrected-private@example.com',name='Resurrected Private Name',first_name='Resurrected',password='private-resurrected-password' WHERE id=2").run();
+  app.db.prepare('INSERT INTO accounts VALUES(2,?)').run(JSON.stringify(createAccount(time)));app.sessions.create(2,'b'.repeat(64));
+  assert.equal(applyAccountDeletionLedger(app.db,ledger).replayed,0);
+  const user=app.db.prepare('SELECT email,name,password FROM users WHERE id=2').get();assert.equal(user.name,'Deleted account');assert.match(user.email,/@deleted\.invalid$/);assert.match(user.password,/^!deleted:/);
+  assert.equal(app.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=2').get().n,0);assert.equal(app.db.prepare('SELECT count(*) n FROM accounts WHERE user_id=2').get().n,0);
+  assert.deepEqual(app.db.prepare('SELECT * FROM progressive_relationships').all(),relationships);assert.deepEqual(app.db.prepare('SELECT * FROM contract_signatures WHERE user_id=2').all(),signatures);
+  assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
+ }finally{app.close();}
+});
+
 test('immutable signature snapshots and restricted notes survive closure, while certificate names and mutable profiles are removed',()=>{
  const app=fixture();try{
   const state=createAccount(time);state.balance=11000;state.locked='Profit target achieved';state.tradingDays=['2026-10-01','2026-10-02','2026-10-03'];const certificate=app.certificates.issue(2,state,time);
@@ -148,6 +265,35 @@ test('immutable signature snapshots and restricted notes survive closure, while 
   assert.ok(result.retained.some(row=>row.category==='signed_agreements'));assert.ok(result.retained.some(row=>row.category==='administration_records'));assert.equal(app.db.prepare('SELECT holder FROM certificates WHERE id=?').get(certificate.id).holder,'Deleted account');assert.deepEqual(app.db.prepare('SELECT * FROM contract_signatures WHERE user_id=2').get(),signed);
   assert.throws(()=>app.db.prepare('DELETE FROM contract_signatures WHERE user_id=2').run(),/immutable/);assert.equal(app.workflows.notes(2).entries[0].text,'Restricted review context');
   assert.ok(!JSON.stringify(result).includes('Ada Legal Trader'));assert.ok(!JSON.stringify(result).includes('Restricted review context'));assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
+ }finally{app.close();}
+});
+
+test('private agreement exports page only the recipient’s metadata and assignment history, and closure counts unsigned retained records',()=>{
+ const app=fixture();try{
+  app.contracts.publish({content:Buffer.from('GLOBAL_CONTRACT_BYTES'),format:'text',version:'global-privacy-fixture',title:'Academy agreement',now:app.time()});
+  const publish=(userId,version)=>app.contracts.publish({content:Buffer.from(`PRIVATE_RAW_CONTRACT_BYTES_${version}`),format:'text',version,title:`Recipient ${userId} agreement ${version}`,recipientUserId:userId,now:app.time()});
+  const first=publish(2,'own-private-v1');app.advance(1);const second=publish(2,'own-private-v2');const other=publish(3,'OTHER_RECIPIENT_PRIVATE_V1');
+  const initial=app.controls.exportData(2,{limit:1});
+  assert.equal(initial.sections.agreements.total,0,'unsigned assigned documents still belong in the personal export');
+  assert.equal(initial.sections.personalAgreementDocuments.total,2);assert.equal(initial.sections.personalAgreementHistory.total,2);
+  assert.deepEqual(initial.sections.personalAgreementRequirement.items.map(item=>({...item})),[{contractId:second.id,scope:'personal'}]);
+  const following=app.controls.exportData(2,{limit:1,offset:1,fingerprint:initial.fingerprint});
+  assert.deepEqual([...initial.sections.personalAgreementDocuments.items,...following.sections.personalAgreementDocuments.items].map(item=>item.id),[first.id,second.id]);
+  assert.deepEqual([...initial.sections.personalAgreementHistory.items,...following.sections.personalAgreementHistory.items].map(item=>item.contractId),[first.id,second.id]);
+  const exported=initial.sections.personalAgreementDocuments.items[0];assert.equal(exported.title,first.title);assert.equal(exported.hash,first.hash);assert.equal(exported.version,first.version);assert.equal(exported.publishedAt,first.publishedAt);assert.equal(exported.scope,'personal');
+  for(const value of ['PRIVATE_RAW_CONTRACT_BYTES','GLOBAL_CONTRACT_BYTES','OTHER_RECIPIENT_PRIVATE',other.id])assert.ok(!JSON.stringify([initial,following]).includes(value),value);
+  const otherExport=app.controls.exportData(3);assert.equal(otherExport.sections.personalAgreementDocuments.total,1);assert.equal(otherExport.sections.personalAgreementRequirement.items[0].contractId,other.id);assert.ok(!JSON.stringify(otherExport).includes(first.id));
+  publish(3,'OTHER_RECIPIENT_PRIVATE_V2');assert.equal(app.controls.exportData(2,{limit:1,offset:1,fingerprint:initial.fingerprint}).fingerprint,initial.fingerprint);
+  const third=publish(2,'own-private-v3');assert.throws(()=>app.controls.exportData(2,{limit:1,offset:1,fingerprint:initial.fingerprint}),error=>error.code==='ACCOUNT_EXPORT_CHANGED');
+  const documents=app.db.prepare('SELECT * FROM contract_documents WHERE recipient_user_id=2 ORDER BY published_at,id').all();
+  const history=app.db.prepare('SELECT * FROM contract_publication_events WHERE contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=2) ORDER BY id').all();
+  const pointer=app.db.prepare('SELECT * FROM user_active_contract WHERE user_id=2').get();assert.equal(pointer.contract_id,third.id);
+  const closed=app.controls.requestDeletion(2,confirmation);assert.equal(closed.status,'deleted');assert.equal(closed.retained.find(item=>item.category==='personal_agreement_records').recordCount,7);
+  assert.match(closed.retentionNotice,/private agreement documents and assignment history/);assert.ok(!JSON.stringify(closed).includes('Recipient 2'));
+  app.db.prepare("UPDATE users SET first_name='Restored',name='Restored Person',email='restored@example.com' WHERE id=2").run();applyAccountDeletionLedger(app.db,app.controls.exportDeletionLedger());
+  assert.equal(app.db.prepare('SELECT first_name FROM users WHERE id=2').get().first_name,'Deleted');assert.equal(app.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=2').get().n,0);
+  assert.deepEqual(app.db.prepare('SELECT * FROM contract_documents WHERE recipient_user_id=2 ORDER BY published_at,id').all(),documents);assert.deepEqual(app.db.prepare('SELECT * FROM contract_publication_events WHERE contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=2) ORDER BY id').all(),history);assert.deepEqual(app.db.prepare('SELECT * FROM user_active_contract WHERE user_id=2').get(),pointer);
+  assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
  }finally{app.close();}
 });
 

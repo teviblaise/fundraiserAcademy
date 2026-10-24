@@ -1,3 +1,8 @@
+import {publicFundraiserName} from './fundraiser-name.js';
+
+export function initializeLeaderboardPage({document:doc=globalThis.document,fetchFn=globalThis.fetch}={}) {
+if (!doc?.getElementById('rankings-body')) return;
+const document=doc,fetch=fetchFn;
 const $ = id => document.getElementById(id);
 const pageSize = 20;
 const money = value => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -50,7 +55,7 @@ function renderBoard(result) {
     rank.className = 'text-lime';
     rank.textContent = `#${entry.rank}`;
     row.append(rank);
-    for (const [index, text] of [entry.displayAlias, percent(entry.returnPercent), money(entry.realizedProfit), String(entry.tradingDays), date(entry.completedAt)].entries()) {
+    for (const [index, text] of [publicFundraiserName(entry.displayAlias), percent(entry.returnPercent), money(entry.realizedProfit), String(entry.tradingDays), date(entry.completedAt)].entries()) {
       const cell = document.createElement('td');
       if (index === 0) cell.className = 'font-semibold';
       if (index === 1) cell.className = 'font-semibold text-lime';
@@ -65,7 +70,7 @@ function renderBoard(result) {
   $('ranking-status').textContent = '';
   $('ranking-status').hidden = true;
   $('ranking-updated').textContent = Number.isFinite(result.updatedAt) ? `Updated ${new Date(result.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · qualifying assessment records` : 'Latest qualifying assessment records';
-  $('page-detail').textContent = empty ? 'No public entries yet.' : result.entries.length ? `Showing ${offset + 1}–${offset + result.entries.length} of ${result.total} traders` : 'There are no entries on this page. Return to the previous page.';
+  $('page-detail').textContent = empty ? 'No public entries yet.' : result.entries.length ? `Showing ${offset + 1}–${offset + result.entries.length} of ${result.total} Fundraisers` : 'There are no entries on this page. Return to the previous page.';
 }
 
 function setBoardLoading(value) {
@@ -115,7 +120,7 @@ function renderPreferences(result, { fillForm = true } = {}) {
   }
   const current = result.entry;
   $('your-rank-label').textContent = current ? 'Your rank · all public entries' : 'Your participation';
-  $('your-rank').textContent = current ? `#${current.rank} · ${current.displayAlias}` : !result.enabled ? 'Not listed' : 'Waiting for eligibility';
+  $('your-rank').textContent = current ? `#${current.rank} · ${publicFundraiserName(current.displayAlias)}` : !result.enabled ? 'Not listed' : 'Waiting for eligibility';
   $('your-rank-detail').textContent = current ? `${percent(current.returnPercent)} realized return · ${money(current.realizedProfit)} demo profit · ${current.tradingDays} trading days` : !result.enabled ? 'Your result is private. Enable participation to join when eligible.' : 'Your preference is saved. Your alias and result appear only after your records meet the requirements.';
   const copy = eligibilityCopy[result.eligibility.status] || { detail: 'Your assessment and current signed agreement must be verified before you can appear. Contact support if your eligibility needs review.' };
   $('eligibility-detail').textContent = copy.detail;
@@ -204,5 +209,7 @@ $('previous-page').addEventListener('click', () => { if (!loadingBoard && offset
 $('next-page').addEventListener('click', () => { if (!loadingBoard && nextOffset !== null) void loadBoard(nextOffset); });
 $('retry-preferences').addEventListener('click', () => void loadPreferences({ fillForm: preferences === null }));
 
-void loadBoard(0);
-void loadPreferences();
+return {ready:Promise.allSettled([loadBoard(0),loadPreferences()]),loadBoard,loadPreferences};
+}
+
+if (typeof document !== 'undefined') initializeLeaderboardPage();

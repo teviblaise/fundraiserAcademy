@@ -33,8 +33,10 @@ in-page popup notifications work without provider credentials.
 See README.md for features and DEPLOYMENT.md for later live hosting.
 
 After passing the assessment, open Trader agreement. Signing is compulsory
-before sponsorship review. The agreement stays pending until the company
-provides its contract. No contract terms are included in this preview.
+before sponsorship review. The supplied revised progressive profit-sharing and
+tier-retention section is included and published on startup. Read the current
+exact version and sign with your full legal name; a website update does not sign
+for you or change an existing signature.
 
 Support is available from the floating Support button. Basic company answers use
 an Academy guide without credentials. Generative AI needs SUPPORT_AI_API_KEY;
@@ -86,9 +88,24 @@ Owners manage roles for registered, verified, 2FA-enabled staff. Trusted server
 operators can use npm run admin:staff -- list, grant, or revoke; see README.md for
 the full commands. These operations cannot bypass email confirmation or 2FA.
 
-Financial entries record verified external activity. Staff must enter the actual
-agreement's profit split and sharing policy. The website does not purchase prop
-accounts or send money. Your client dashboard shows your own review message and
+Financial entries record reconciled external activity. New standard agreements
+start at 50% to the trader, rising to 60% after $10,000 and 70% after $25,000 in
+cumulative qualifying net payouts. A crossing receipt uses the old tier; the
+upgrade applies to the next eligible receipt. Only eligible funds actually
+received and cleared by the company count, after prop-firm deductions and agreed
+transaction charges, before splitting. All eligible accounts aggregate during a
+continuous contractual relationship. Ordinary losses, evaluation failure, account
+closure and a new sponsored account do not reset an earned tier.
+
+The company must initiate payment within three business days of cleared receipt;
+operational counting uses Monday-Friday in Africa/Lagos. Read the recorded
+statement, deadline and payment status in Account controls. The website does not
+purchase prop accounts or send money. Existing fixed-share terms and posted
+statements remain protected. Reinstatement after termination requires an express
+written tier determination before new sponsorship begins. Prepare the
+reinstatement agreement, publish it privately for the returning Fundraiser,
+obtain their personal signature and a new review, then record reinstatement.
+A checkbox cannot supply their signature or reset the old earned records. Your client dashboard shows your own review message and
 recorded accounts and payouts; internal notes remain private to authorized staff.
 Back up the database and private keys together on persistent storage. The free
 Render preview cannot preserve lasting account, agreement, or financial records.
@@ -172,3 +189,8 @@ database and is not complete recovery after losing the database or host. Restore
 accounts require password resets; old sessions, tokens, and recovery codes are
 revoked, while authenticator protection stays enabled with its original key.
 See DEPLOYMENT.md for exact commands, requirements, and recovery limitations.
+
+FUNDRAISER DISPLAY NAMES
+Your private display title uses your registered first name followed by Fundraiser.
+Public leaderboard entries use the alias you opted to publish. Legal names and
+certificate-name preferences remain separate from these display titles.

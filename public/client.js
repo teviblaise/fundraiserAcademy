@@ -1,4 +1,9 @@
 import { assessmentSummary, guidedNextStep } from './client-summary.js';
+import { fundraiserName } from './fundraiser-name.js';
+
+export function initializeClientPage({document: doc = globalThis.document, window: win = globalThis.window, fetchFn = globalThis.fetch} = {}) {
+if (!doc?.getElementById('welcome-name')) return;
+const document = doc, window = win, location = win.location, fetch = fetchFn;
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
@@ -47,9 +52,10 @@ function confirmationFailureMessage(error) {
 
 function renderProfile(next, { fillForm = true } = {}) {
   user = next;
-  const firstName = next.firstName || next.name?.split(' ')[0] || 'trader';
-  $('welcome-name').textContent = firstName + '.';
-  $('profile-name').textContent = next.name;
+  const firstName = next.firstName || next.name?.split(' ')[0] || '';
+  const displayName = fundraiserName(next);
+  $('welcome-name').textContent = displayName + '.';
+  $('profile-name').textContent = displayName;
   $('profile-email').textContent = next.email;
   $('profile-market').textContent = next.market || 'Not provided';
   $('profile-id').textContent = String(next.id);
@@ -159,7 +165,7 @@ function renderContract(result) {
   const descriptions = {
     assessment_required: 'Available after you pass an assessment. Signing is compulsory before sponsorship review.',
     awaiting_contract: 'Assessment completed. Awaiting the company agreement; signing is compulsory before sponsorship review.',
-    signature_required: 'Your agreement is ready. Read and sign it on the trader agreement page.',
+    signature_required: 'Your agreement is ready. Read and sign it on the academy agreement page.',
     signed: 'Your signature is recorded. View your signed agreement and signature receipt.',
   };
   $('journey-contract').textContent = descriptions[result.status] || 'View the agreement page for your current status.';
@@ -192,7 +198,7 @@ async function refreshOverview() {
       $('journey-certificate').textContent = 'Certificate status is currently unavailable. Open your certificates page to check.';
     } },
     { path: '/api/contract', render: renderContract, fail: error => {
-      $('journey-contract').textContent = failureMessage(error) + ' Check the trader agreement page for your status.';
+      $('journey-contract').textContent = failureMessage(error) + ' Check the academy agreement page for your status.';
     } },
   ];
   const requests = needsConfirmation() ? [{
@@ -307,4 +313,7 @@ async function loadProfile() {
   } finally { loadingProfile = false; }
 }
 
-void loadProfile();
+return {ready: loadProfile(), checkLatestProfile};
+}
+
+if (typeof document !== 'undefined') initializeClientPage();

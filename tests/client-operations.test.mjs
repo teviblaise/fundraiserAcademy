@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import {createProfitSharingView,payoutStatement,payoutProcessingText} from '../public/profit-sharing-view.js';
 
 const html = readFileSync(new URL('../public/client.html', import.meta.url), 'utf8');
-const script = readFileSync(new URL('../public/client-operations.js', import.meta.url), 'utf8');
+const script = readFileSync(new URL('../public/client-operations.js', import.meta.url), 'utf8').replace(/^import .*;\s*$/gm,'');
 const timestamp = Date.UTC(2026, 9, 21, 10);
 const response = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 const empty = (status = 'assessment_required') => ({
@@ -47,6 +48,7 @@ function fixture(fetcher = async () => response(empty())) {
     document: { getElementById: id => nodes.get(id) || null, createElement: tag => new Element(tag) },
     window: { addEventListener: (name, callback) => events.set(name, callback) }, AbortSignal,
     fetch: async (...args) => { calls.push(args); return fetcher(...args); },
+    createProfitSharingView,payoutStatement,payoutProcessingText,
   });
   return {
     nodes, calls,
@@ -160,4 +162,13 @@ test('leaving the page clears records, ignores an old response, and a restored p
   assert.equal(page.nodes.get('sponsorship-review-status').textContent, 'More information needed');
   assert.equal(page.nodes.get('refresh-sponsorship').disabled, false);
   assert.equal(page.nodes.get('sponsorship-operations').getAttribute('aria-busy'), 'false');
+});
+
+test('the client dashboard reports cross-account retained tiers and actual cleared receipts with their separate payment deadline',async()=>{
+ const payload=recorded();payload.funding.accounts[0].sharingModel='progressive_cleared';payload.funding.accounts[0].profitSharingPolicy='progressive_cleared';payload.funding.accounts[0].traderShareBps=6000;
+ payload.funding.progressions=[{status:'active',currentTraderShareBps:6000,currentCompanyShareBps:4000,cumulativeQualifyingNetPayoutsCents:1000000,nextThresholdCents:2500000,nextTraderShareBps:7000}];
+ payload.funding.receipts=[{id:'3b2fb4e4-4b55-44bb-9ce4-d4bbb2066347',accountId:payload.funding.accounts[0].id,amountReceivedCents:1000000,thirdPartyChargesCents:0,qualifyingNetPayoutCents:1000000,appliedTraderShareBps:5000,traderShareCents:500000,companyShareCents:500000,cumulativeAfterCents:1000000,nextTraderShareBps:6000,clearedAt:timestamp,initiationDueAt:timestamp+5*86400000,initiatedCents:0,outstandingCents:500000,evidence:'PRIVATE RECONCILIATION'}];payload.funding.receiptsTotal=1;
+ const page=fixture(async()=>response(payload));await page.settle();const text=page.nodes.get('sponsored-profit-sharing').textContent;assert.match(text,/retained profit-sharing tier/);assert.match(text,/60%/);assert.match(text,/Applied fundraiser share50%/);assert.match(text,/Payment initiation due/);assert.match(text,/Monday–Friday in Africa\/Lagos/);assert.doesNotMatch(text,/PRIVATE RECONCILIATION/);
+ assert.match(page.nodes.get('sponsored-accounts-list').textContent,/Your share on next eligible payout60%/);
+ await page.pagehide();assert.equal(page.nodes.get('sponsored-profit-sharing').children.length,0);
 });

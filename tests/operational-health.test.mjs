@@ -28,6 +28,19 @@ async function fixture(options={}){
 }
 const check=(status,id)=>status.checks.find(item=>item.id===id);
 
+test('cleared-funds initiation health tracks receipt obligations independently of withdrawal requests and hides private ledger details',async()=>{
+  const payments={overdueReceipts:0,uninitiatedTraderShareCents:0,overdueTraderShareCents:0};
+  const app=await fixture({paymentProcessing:()=>payments});try{
+    assert.equal(check(app.health.status(),'payout-processing').state,'ok');
+    payments.uninitiatedTraderShareCents=50000;
+    assert.equal(check(app.health.status(),'payout-processing').state,'warning');
+    payments.overdueReceipts=1;payments.overdueTraderShareCents=25000;payments.privateEvidence='private-payout-reference';
+    const report=app.health.status(),finding=check(report,'payout-processing');
+    assert.equal(finding.state,'critical');assert.match(finding.summary,/USD 250\.00 is overdue/);assert.match(finding.action,/withdrawal request or approval does not satisfy/);assert.doesNotMatch(JSON.stringify(report),/private-payout-reference/);
+    payments.overdueReceipts=-1;assert.equal(check(app.health.status(),'payout-processing').state,'warning');
+  }finally{await app.close();}
+});
+
 test('live readiness uses current truthful configuration and finite aggregate metrics without exposing identities or paths',async()=>{
   const app=await fixture();try{
     const report=app.health.status();assert.equal(report.overall,'attention');assert.equal(check(report,'database').state,'ok');assert.equal(check(report,'backup-freshness').state,'ok');assert.equal(check(report,'offsite-backups').state,'warning');assert.equal(check(report,'persistent-storage').state,'warning');assert.equal(check(report,'email').state,'ok');assert.match(check(report,'email').summary,/not probed/);assert.equal(report.lastDiagnostic,null);

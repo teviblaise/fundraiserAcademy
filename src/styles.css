@@ -7,6 +7,8 @@
 @source "../public/admin.js";
 @source "../public/admin-api.js";
 @source "../public/admin-extensions.js";
+@source "../public/admin-profit-sharing.js";
+@source "../public/profit-sharing-view.js";
 @source "../public/account-tools.js";
 @source "../public/performance.js";
 @source "../public/client-operations.js";

@@ -75,6 +75,32 @@ test('certificate and contract pages distinguish verified certificates and exact
  }finally{app.close();}
 });
 
+test('personal agreement requirements preserve unrelated members and count only each member’s current signed version',()=>{
+ const app=fixture();try{
+  const base=app.contracts.publish({content:Buffer.from('Company-wide test terms'),format:'text',version:'scoped-base',now:time-3*86400000});
+  app.qualify(1);app.qualify(3);
+  const sign=(userId,document,at)=>app.contracts.sign(userId,{contractId:document.id,contractVersion:document.version,contractHash:document.hash,legalName:`Registered Legal Person ${userId}`,consent:true},at);
+  sign(1,base,time-86400000);sign(3,base,time-86400000);
+  assert.equal(app.data.overview().metrics.currentSignatures,2);
+  const personal=app.contracts.publish({content:Buffer.from('Private amendment for the intended member only'),format:'text',version:'scoped-personal',recipientUserId:1,now:time-1000});
+  assert.equal(app.data.trader(1).contractStatus,'signature_required');assert.equal(app.data.trader(3).contractStatus,'signed');
+  assert.equal(app.data.overview().metrics.currentSignatures,1);
+  sign(1,personal,time);
+  assert.equal(app.data.overview().metrics.currentSignatures,2);
+  assert.equal(app.data.traders().items.find(item=>item.id===1).contractStatus,'signed');
+  const documents=app.data.contractsPage();
+  assert.equal(documents.active.id,base.id);
+  assert.equal(documents.items.find(item=>item.id===personal.id).recipientUserId,1);
+  assert.equal(documents.items.find(item=>item.id===personal.id).scope,'personal');
+  app.contracts.publish({content:Buffer.from('New company-wide test terms'),format:'text',version:'scoped-base-2',now:time+1});
+  assert.equal(app.data.trader(1).contractStatus,'signed');assert.equal(app.data.trader(3).contractStatus,'signature_required');
+  assert.equal(app.data.overview().metrics.currentSignatures,1);
+  app.db.prepare('UPDATE users SET first_name=? WHERE id=1').run('Ana Maria');
+  assert.equal(app.data.trader(1).firstName,'Ana Maria');
+  assert.equal(app.data.certificatesPage({userId:1}).items[0].traderFirstName,'Ana Maria');
+ }finally{app.close();}
+});
+
 test('legacy, short or inconsistent certificate results do not count as qualification',()=>{
  const app=fixture();try{const certificate=app.qualify(1);app.db.prepare('UPDATE certificates SET profit_percent=99 WHERE id=?').run(certificate.id);assert.equal(app.data.certificatesPage().items[0].qualified,false);assert.equal(app.data.overview().metrics.qualifiedTraders,0);assert.equal(app.data.trader(1).contractStatus,'assessment_required');}finally{app.close();}
 });

@@ -102,6 +102,7 @@ export function createAdminConsole(db, { access, sessions, twoFactor, contracts,
       if (pathname === '/api/admin/overview') { access.require(id,'overview.read'); result = data.overview(query); }
       else if (pathname === '/api/admin/traders') { access.require(id,'traders.read'); result = data.traders(query); }
       else if (/^\/api\/admin\/traders\/[1-9]\d*$/.test(pathname)) { access.require(id,'traders.read'); result = data.trader(numericId(pathname.split('/').at(-1)),query); }
+      else if (/^\/api\/admin\/traders\/[1-9]\d*\/profit-sharing$/.test(pathname)) { access.require(id,'finance.read'); result = finance.profitSharing(numericId(pathname.split('/').at(-2))); }
       else if (pathname === '/api/admin/assessments') { access.require(id,'assessments.read'); result = data.assessments(query); }
       else if (pathname === '/api/admin/certificates') { access.require(id,'certificates.read'); result = data.certificatesPage(query); }
       else if (pathname === '/api/admin/contracts') { access.require(id,'contracts.read'); result = data.contractsPage(query); }
@@ -139,11 +140,13 @@ export function createAdminConsole(db, { access, sessions, twoFactor, contracts,
     if (req.method !== 'POST') throw fail(405,'Use GET or POST for administrator requests.');
     const traderAction = /^\/api\/admin\/traders\/([1-9]\d*)\/(status|revoke-sessions|notes)$/.exec(pathname);
     const reviewAction = /^\/api\/admin\/reviews\/([1-9]\d*)$/.exec(pathname);
-    const accountAction = /^\/api\/admin\/accounts\/([a-f0-9-]{36})(\/statements)?$/.exec(pathname);
-    const payoutAction = /^\/api\/admin\/payouts\/([a-f0-9-]{36})$/.exec(pathname);
+    const relationshipAction = /^\/api\/admin\/traders\/([1-9]\d*)\/profit-sharing$/.exec(pathname);
+    const reinstatementPreparation = /^\/api\/admin\/traders\/([1-9]\d*)\/profit-sharing\/prepare-reinstatement$/.exec(pathname);
+    const accountAction = /^\/api\/admin\/accounts\/([a-f0-9-]{36})(\/statements|\/receipts)?$/.exec(pathname);
+    const payoutAction = /^\/api\/admin\/payouts\/([a-f0-9-]{36})(\/initiate)?$/.exec(pathname);
     const permission = traderAction ? traderAction[2]==='notes'?'reviews.write':'traders.manage' : reviewAction?'reviews.write'
       : pathname==='/api/admin/contracts'?'contracts.publish' : pathname.startsWith('/api/admin/staff/')?'staff.manage'
-        : pathname==='/api/admin/accounts'||accountAction||pathname==='/api/admin/payouts'||payoutAction?'finance.write':null;
+        : pathname==='/api/admin/accounts'||accountAction||pathname==='/api/admin/payouts'||payoutAction||relationshipAction||reinstatementPreparation?'finance.write':null;
     if (!permission) throw fail(404,'Administrator endpoint not found.');
     privileged(req,id,permission);
     limit(req,`admin-write:${id}`,60,600000);
@@ -158,9 +161,11 @@ export function createAdminConsole(db, { access, sessions, twoFactor, contracts,
     } else if (reviewAction) result=workflows.decideReview(id,numericId(reviewAction[1]),input);
     else if (pathname==='/api/admin/contracts') result=workflows.publishContract(id,input);
     else if (pathname==='/api/admin/accounts') result=finance.createAccount(id,input);
-    else if (accountAction) result=accountAction[2]?finance.recordStatement(id,accountAction[1],input):finance.updateAccount(id,accountAction[1],input);
+    else if (reinstatementPreparation) result=finance.prepareReinstatement(id,numericId(reinstatementPreparation[1]),input);
+    else if (relationshipAction) result=finance.updateRelationship(id,numericId(relationshipAction[1]),input);
+    else if (accountAction) result=accountAction[2]==='/receipts'?finance.recordClearedReceipt(id,accountAction[1],input):accountAction[2]?finance.recordStatement(id,accountAction[1],input):finance.updateAccount(id,accountAction[1],input);
     else if (pathname==='/api/admin/payouts') result=finance.createPayout(id,input);
-    else if (payoutAction) result=finance.updatePayout(id,payoutAction[1],input);
+    else if (payoutAction) result=payoutAction[2]?finance.initiatePayout(id,payoutAction[1],input):finance.updatePayout(id,payoutAction[1],input);
     else if (['/api/admin/staff/grant','/api/admin/staff/revoke'].includes(pathname)) {
       result=transaction(()=>{
         privileged(req,id,'staff.manage');

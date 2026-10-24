@@ -9,7 +9,7 @@ const validId = value => Number.isSafeInteger(value) && value > 0;
 const exists = (db, table) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table));
 const columns = (db, table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name));
 const digest = value => createHash('sha256').update(value).digest('hex');
-const retentionNotice = 'Account closure removes the mutable profile, trading data, authentication and delivery data, and customer support conversations. Immutable signed agreements, financial records, review history and administrative records remain restricted to authorized staff for retention review. Existing backups may contain earlier data until the configured backup retention expires. This is not a claim that all personal data has been erased.';
+const retentionNotice = 'Account closure removes the mutable profile, trading data, authentication and delivery data, and customer support conversations. Immutable signed agreements, private agreement documents and assignment history, financial records, review history and administrative records remain restricted to authorized staff for retention review. Existing backups may contain earlier data until the configured backup retention expires. This is not a claim that all personal data has been erased.';
 function pageInteger(value, fallback, minimum, maximum) {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value))) fail(400,'Choose valid account-control pagination.');
@@ -46,9 +46,25 @@ function requireUser(db, userId) {
 function count(db, table, where, ...parameters) { return exists(db, table) ? db.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${where}`).get(...parameters).n : 0; }
 
 function retainedRecords(db, userId) {
+  const personalAgreements=exists(db,'contract_documents')&&columns(db,'contract_documents').has('recipient_user_id');
+  const personalAgreementRecords=personalAgreements?count(db,'contract_documents','recipient_user_id=?',userId)
+    +count(db,'contract_publication_events','contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=?)',userId)
+    +count(db,'user_active_contract','user_id=? AND contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=?)',userId,userId):0;
+  const financialRecords=count(db,'sponsored_accounts','user_id=?',userId)
+    +count(db,'sponsored_statements','user_id=?',userId)
+    +count(db,'sponsored_payouts','user_id=?',userId)
+    +count(db,'sponsored_payout_events','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?)',userId)
+    +count(db,'sponsored_client_payout_requests','user_id=?',userId)
+    +count(db,'progressive_relationships','user_id=?',userId)
+    +count(db,'progressive_receipts','user_id=?',userId)
+    +count(db,'progressive_account_links','account_id IN (SELECT id FROM sponsored_accounts WHERE user_id=?)',userId)
+    +count(db,'progressive_payout_allocations','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?) AND receipt_id IN (SELECT id FROM progressive_receipts WHERE user_id=?)',userId,userId)
+    +count(db,'progressive_payout_initiations','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?)',userId)
+    +count(db,'progressive_relationship_events','relationship_id IN (SELECT id FROM progressive_relationships WHERE user_id=?)',userId);
   const items = [
     ['signed_agreements','Signed agreements and recorded legal signature details',count(db,'contract_signatures','user_id=?',userId)],
-    ['financial_records','Sponsored-account, profit-statement and payout records',count(db,'sponsored_accounts','user_id=?',userId)+count(db,'sponsored_statements','user_id=?',userId)+count(db,'sponsored_payouts','user_id=?',userId)+count(db,'sponsored_client_payout_requests','user_id=?',userId)],
+    ['personal_agreement_records','Private agreement documents, assignment history and current agreement requirement',personalAgreementRecords],
+    ['financial_records','Sponsored accounts, cleared payouts, profit-sharing relationships and payment records',financialRecords],
     ['review_history','Immutable sponsorship-review history',count(db,'sponsorship_review_history','user_id=?',userId)],
     ['administration_records','Restricted administrative notes and audit records',count(db,'admin_notes','user_id=? OR actor_user_id=?',userId,userId)+count(db,'admin_audit','target_user_id=? OR actor_user_id=?',userId,userId)],
     ['certificate_records','Certificate results with the display name removed',count(db,'certificates','user_id=?',userId)],
@@ -148,9 +164,11 @@ export function createAccountControls(db,{access,now=Date.now}={}){
     const legacy=(process.env.SUPPORT_STAFF_EMAILS||'').split(',').map(value=>value.trim().toLowerCase());
     if(legacy.includes(user.email)||count(db,'support_roles','user_id=?',userId))items.push({code:'SUPPORT_ACCESS_ASSIGNED',message:'An operator must remove your support-staff assignment before account closure.'});
     if(count(db,'sponsored_accounts',"user_id=? AND status!='closed'",userId))items.push({code:'SPONSORED_ACCOUNT_OPEN',message:'The academy must close your sponsored-account allocations before account closure.'});
+    if(count(db,'progressive_relationships',"user_id=? AND status='active'",userId))items.push({code:'PROGRESSIVE_RELATIONSHIP_ACTIVE',message:'Contact the academy to formally end your active sponsorship relationship and settle its obligations before account closure. Closing a trading account does not end your retained profit-sharing tier.'});
     if(count(db,'sponsored_payouts',"user_id=? AND status IN ('requested','approved')",userId))items.push({code:'PAYOUT_PENDING',message:'Requested or approved payouts must be resolved before account closure.'});
-    if(exists(db,'sponsored_statements')){
-      const earned=db.prepare('SELECT trader_share_cents AS amount FROM sponsored_statements WHERE user_id=?').all(userId).reduce((total,row)=>total+BigInt(row.amount),0n);
+    if(exists(db,'sponsored_statements')||exists(db,'progressive_receipts')){
+      let earned=0n;
+      for(const table of ['sponsored_statements','progressive_receipts'])if(exists(db,table))earned+=db.prepare(`SELECT trader_share_cents AS amount FROM ${table} WHERE user_id=?`).all(userId).reduce((total,row)=>total+BigInt(row.amount),0n);
       const paid=exists(db,'sponsored_payouts')?db.prepare("SELECT amount_cents AS amount FROM sponsored_payouts WHERE user_id=? AND status='paid'").all(userId).reduce((total,row)=>total+BigInt(row.amount),0n):0n;
       if(earned>paid)items.push({code:'EARNED_SHARE_UNSETTLED',message:'The academy must settle your earned profit share before account closure.'});
     }
@@ -234,12 +252,28 @@ export function createAccountControls(db,{access,now=Date.now}={}){
     }
     rows('certificates','certificates','id,holder,issued_at AS issuedAt,initial_balance AS initialBalance,final_balance AS finalBalance,profit_percent AS profitPercent,trading_days AS tradingDays,price_mode AS priceMode');
     rows('agreements','contract_signatures','id,contract_id AS contractId,contract_version AS contractVersion,contract_hash AS contractHash,certificate_id AS certificateId,legal_name AS legalName,registered_name AS registeredName,email,consent_statement AS consentStatement,signed_at AS signedAt');
+    if(exists(db,'contract_documents')&&columns(db,'contract_documents').has('recipient_user_id')){
+      rows('personalAgreementDocuments','contract_documents',"id,title,version,hash,format,file_name AS fileName,published_at AS publishedAt,'personal' AS scope",'recipient_user_id=?',[userId],'published_at,id');
+      rows('personalAgreementHistory','contract_publication_events',"id,contract_id AS contractId,created_at AS assignedAt,'personal' AS scope",'contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=?)',[userId],'created_at,id');
+      rows('personalAgreementRequirement','user_active_contract',"contract_id AS contractId,'personal' AS scope",'user_id=? AND contract_id IN (SELECT id FROM contract_documents WHERE recipient_user_id=?)',[userId,userId],'user_id');
+    }else for(const section of ['personalAgreementDocuments','personalAgreementHistory','personalAgreementRequirement'])array(section,[]);
     rows('supportConversations','support_conversations','id,status,created_at AS createdAt,updated_at AS updatedAt','owner_user_id=?');
     if(exists(db,'support_messages'))rows('supportMessages','support_messages','id,conversation_id AS conversationId,role,content,source,created_at AS createdAt','conversation_id IN (SELECT id FROM support_conversations WHERE owner_user_id=?)',[userId],'id');
-    rows('sponsoredAccounts','sponsored_accounts','id,firm_name AS firmName,label,account_size_cents AS accountSizeCents,trader_share_bps AS traderShareBps,profit_sharing_policy AS profitSharingPolicy,currency,status,contract_version AS contractVersion,created_at AS createdAt,updated_at AS updatedAt');
+    const progressiveAccounts=new Map();
+    if(exists(db,'progressive_account_links')&&exists(db,'progressive_relationships'))for(const row of db.prepare('SELECT l.account_id AS accountId,r.id AS relationshipId,r.current_tier_bps AS currentTraderShareBps FROM progressive_account_links l JOIN progressive_relationships r ON r.id=l.relationship_id JOIN sponsored_accounts a ON a.id=l.account_id WHERE r.user_id=? AND a.user_id=?').all(userId,userId))progressiveAccounts.set(row.accountId,row);
+    rows('sponsoredAccounts','sponsored_accounts','id,firm_name AS firmName,label,account_size_cents AS accountSizeCents,trader_share_bps AS traderShareBps,profit_sharing_policy AS profitSharingPolicy,currency,status,contract_version AS contractVersion,created_at AS createdAt,updated_at AS updatedAt','user_id=?',[userId],'rowid',row=>{
+      const progression=progressiveAccounts.get(row.id);
+      return progression?{...row,sharingModel:'progressive_cleared',profitSharingPolicy:'progressive_cleared',recordedTraderShareBps:row.traderShareBps,traderShareBps:progression.currentTraderShareBps,currentTraderShareBps:progression.currentTraderShareBps,relationshipId:progression.relationshipId}:{...row,sharingModel:'legacy_fixed'};
+    });
     rows('profitStatements','sponsored_statements','id,account_id AS accountId,net_profit_cents AS netProfitCents,trader_share_cents AS traderShareCents,company_share_cents AS companyShareCents,cumulative_net_profit_cents AS cumulativeNetProfitCents,period_start AS periodStart,period_end AS periodEnd,created_at AS createdAt');
     rows('payouts','sponsored_payouts','id,account_id AS accountId,amount_cents AS amountCents,currency,status,paid_at AS paidAt,created_at AS createdAt,updated_at AS updatedAt');
     rows('payoutHistory','sponsored_payout_events','id,payout_id AS payoutId,previous_status AS previousStatus,status,created_at AS createdAt','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?)');
+    rows('profitSharingRelationships','progressive_relationships','id,status,initial_tier_bps AS initialTraderShareBps,current_tier_bps AS currentTraderShareBps,cumulative_qualifying_cents AS cumulativeQualifyingNetPayoutsCents,started_at AS startedAt,terminated_at AS terminatedAt,revision,contract_id AS contractId,contract_version AS contractVersion,contract_hash AS contractHash,signature_id AS signatureId,previous_relationship_id AS previousRelationshipId','user_id=?',[userId],'started_at,id');
+    rows('profitSharingAccountLinks','progressive_account_links','account_id AS accountId,relationship_id AS relationshipId','account_id IN (SELECT id FROM sponsored_accounts WHERE user_id=?) AND relationship_id IN (SELECT id FROM progressive_relationships WHERE user_id=?)',[userId,userId],'account_id');
+    rows('qualifyingPayoutReceipts','progressive_receipts',"id,account_id AS accountId,relationship_id AS relationshipId,amount_received_cents AS amountReceivedCents,third_party_charges_cents AS thirdPartyChargesCents,qualifying_net_payout_cents AS qualifyingNetPayoutCents,applied_trader_share_bps AS appliedTraderShareBps,trader_share_cents AS traderShareCents,company_share_cents AS companyShareCents,cumulative_before_cents AS cumulativeBeforeCents,cumulative_after_cents AS cumulativeAfterCents,next_trader_share_bps AS nextTraderShareBps,cleared_at AS clearedAt,initiation_due_at AS initiationDueAt,created_at AS createdAt,'USD' AS currency",'user_id=?',[userId],'sequence');
+    rows('payoutReceiptAllocations','progressive_payout_allocations','payout_id AS payoutId,receipt_id AS receiptId,amount_cents AS amountCents','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?) AND receipt_id IN (SELECT id FROM progressive_receipts WHERE user_id=?)',[userId,userId],'payout_id,receipt_id');
+    rows('paymentInitiations','progressive_payout_initiations','payout_id AS payoutId,initiated_at AS initiatedAt,created_at AS createdAt','payout_id IN (SELECT id FROM sponsored_payouts WHERE user_id=?)',[userId],'payout_id');
+    rows('profitSharingHistory','progressive_relationship_events','id,relationship_id AS relationshipId,action,previous_status AS previousStatus,status,trader_consent_confirmed AS traderConsentConfirmed,created_at AS createdAt','relationship_id IN (SELECT id FROM progressive_relationships WHERE user_id=?)',[userId],'created_at,id');
     rows('sponsorshipReviewHistory','sponsorship_review_history','id,revision,status,contract_version AS contractVersion,certificate_id AS certificateId,client_message AS clientMessage,created_at AS createdAt');
     rows('assessmentEquityObservations','performance_assessment_snapshots','attempt,bucket_at AS bucketAt,first_sample AS firstSample,last_sample AS lastSample,low_sample AS lowSample,high_sample AS highSample','user_id=?',[userId],'bucket_at,attempt',row=>({...row,firstSample:json(row.firstSample),lastSample:json(row.lastSample),lowSample:json(row.lowSample),highSample:json(row.highSample)}));
     rows('sponsoredConnections','sponsored_sync_links','account_id AS accountId,active,revision,history_from AS historyFrom,linked_at AS linkedAt,updated_at AS updatedAt,last_attempt_at AS lastAttemptAt,last_success_at AS lastSuccessAt,history_through AS historyThrough,history_complete AS historyComplete,currency,error_code AS errorCode','account_id IN (SELECT id FROM sponsored_accounts WHERE user_id=?)',[userId],'account_id');

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { contractConsentStatement } from './contracts.mjs';
+import { contractConsentStatement, requiredContractDocument } from './contracts.mjs';
 
 export class AdminWorkflowError extends Error {
   constructor(status, message, code) { super(message); this.status = status; if (code) this.code = code; }
@@ -51,9 +51,10 @@ export function createAdminWorkflows(db, { access, contracts, leaderboard, now =
     try { const value = work(); if (value && typeof value.then === 'function') throw new TypeError('Administrative transactions must be synchronous.'); if (owned) db.exec('COMMIT'); return value; }
     catch (failure) { if (owned) db.exec('ROLLBACK'); throw failure; }
   }
+  const firstNameField=db.prepare('PRAGMA table_info(users)').all().some(column=>column.name==='first_name')?'first_name':'NULL';
   function target(userId) {
     if (!validId(userId)) throw new AdminWorkflowError(400, 'Choose a registered trader.');
-    const row = db.prepare('SELECT id,name,email FROM users WHERE id=?').get(userId);
+    const row = db.prepare(`SELECT id,name,email,${firstNameField} AS first_name FROM users WHERE id=?`).get(userId);
     if (!row) throw new AdminWorkflowError(404, 'Trader not found.');
     return row;
   }
@@ -116,7 +117,7 @@ export function createAdminWorkflows(db, { access, contracts, leaderboard, now =
       return Number.isFinite(certificate.initial_balance)&&certificate.initial_balance>0&&Number.isFinite(certificate.final_balance)&&Number.isFinite(certificate.profit_percent)&&Number.isFinite(result)&&result>=10&&Math.abs(result-certificate.profit_percent)<=Math.max(1e-8,Math.abs(result)*1e-10)&&Number.isSafeInteger(certificate.trading_days)&&Number.isSafeInteger(certificate.issued_at)&&certificate.issued_at>0;
     });
     if (!qualifying) return {eligible:false,status:'assessment_required'};
-    const document=db.prepare('SELECT d.id,d.version,d.hash,d.published_at FROM contract_documents d JOIN active_contract a ON a.contract_id=d.id WHERE a.singleton=1').get();
+    const document=requiredContractDocument(db,userId);
     if (!document) return {eligible:false,status:'awaiting_contract'};
     const row=db.prepare(`SELECT s.id AS signature_id,s.user_id,s.contract_id,s.contract_version,s.contract_hash,s.certificate_id,s.consent_statement,s.signed_at,
       c.user_id AS certificate_owner,c.price_mode,c.initial_balance,c.final_balance,c.profit_percent,c.trading_days,c.issued_at
@@ -137,7 +138,7 @@ export function createAdminWorkflows(db, { access, contracts, leaderboard, now =
   function review(userId,{includeHistory=true}={}) {
     const user=target(userId), current=eligibility(userId), row=stored(userId);
     const stale=Boolean(row && (!current.qualified || row.status==='approved'&&!current.eligible || row.contract_id!==current.contractId || row.contract_version!==current.contractVersion || row.contract_hash!==current.contractHash || row.certificate_id!==current.certificateId || row.signature_id!==current.signatureId));
-    return {id:row?.id??null,userId,name:user.name,email:user.email,status:row&&!stale?row.status:current.eligible?'pending_review':current.status,storedStatus:row?.status??null,revision:row?.revision??0,eligibility:{eligible:current.eligible,status:current.status},contractId:current.contractId??row?.contract_id??null,contractVersion:current.contractVersion??row?.contract_version??null,contractHash:current.contractHash??row?.contract_hash??null,certificateId:current.certificateId??row?.certificate_id??null,signatureId:current.signatureId??row?.signature_id??null,clientMessage:!stale?row?.client_message??'':'',updatedAt:row?.updated_at??null,updatedBy:row?.updated_by??null,stale,...(includeHistory?{history:history(userId)}:{})};
+    return {id:row?.id??null,userId,name:user.name,firstName:user.first_name,email:user.email,status:row&&!stale?row.status:current.eligible?'pending_review':current.status,storedStatus:row?.status??null,revision:row?.revision??0,eligibility:{eligible:current.eligible,status:current.status},contractId:current.contractId??row?.contract_id??null,contractVersion:current.contractVersion??row?.contract_version??null,contractHash:current.contractHash??row?.contract_hash??null,certificateId:current.certificateId??row?.certificate_id??null,signatureId:current.signatureId??row?.signature_id??null,clientMessage:!stale?row?.client_message??'':'',updatedAt:row?.updated_at??null,updatedBy:row?.updated_by??null,stale,...(includeHistory?{history:history(userId)}:{})};
   }
   function reviews({status,search='',limit=50,offset=0}={}) {
     limit=pageNumber(limit,50,1,100);offset=pageNumber(offset,0,0,1000000);
@@ -149,7 +150,7 @@ export function createAdminWorkflows(db, { access, contracts, leaderboard, now =
   function reviewEntries(search='') {
     // Qualifying signers and past cases form the queue. No fake pending cases
     // are materialized merely by opening the administrator dashboard.
-    const users=db.prepare(`SELECT u.id FROM users u WHERE u.id IN (SELECT user_id FROM sponsorship_reviews UNION SELECT s.user_id FROM contract_signatures s JOIN active_contract a ON a.contract_id=s.contract_id)
+    const users=db.prepare(`SELECT u.id FROM users u WHERE u.id IN (SELECT user_id FROM sponsorship_reviews UNION SELECT s.user_id FROM contract_signatures s WHERE s.contract_id=coalesce((SELECT p.contract_id FROM user_active_contract p WHERE p.user_id=s.user_id),(SELECT a.contract_id FROM active_contract a WHERE a.singleton=1)))
       AND (instr(lower(u.name),lower(?))>0 OR instr(lower(u.email),lower(?))>0) ORDER BY u.id`).all(search.trim(),search.trim());
     return users.map(row=>review(row.id,{includeHistory:false})).sort((a,b)=>(b.updatedAt??0)-(a.updatedAt??0)||a.userId-b.userId);
   }
@@ -194,8 +195,9 @@ export function createAdminWorkflows(db, { access, contracts, leaderboard, now =
       if(typeof data.contentBase64!=='string' || data.contentBase64.length>13981016 || data.contentBase64.length%4!==0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data.contentBase64))throw new AdminWorkflowError(400,'Provide a PDF or UTF-8 text document encoded as base64, up to 10 MB.');
       const content=Buffer.from(data.contentBase64,'base64');
       if(!content.length||content.length>10*1024*1024||content.toString('base64')!==data.contentBase64)throw new AdminWorkflowError(400,'Provide a document of 1 byte to 10 MB.');
-      const published=contracts.publish({content,format:data.format,version:data.version,title:data.title,fileName:data.fileName,now:now()});
-      access.audit(actorId,'contract.published',{reason,detail:{contractId:published.id,contractVersion:published.version,documentHash:published.hash,fileName:published.fileName,format:published.format,title:published.title,source:published.reused?'existing-version':'admin-dashboard'}});
+      const recipientUserId=data.recipientUserId===undefined||data.recipientUserId===null?null:target(data.recipientUserId).id;
+      const published=contracts.publish({content,format:data.format,version:data.version,title:data.title,fileName:data.fileName,recipientUserId,now:now()});
+      access.audit(actorId,'contract.published',{targetId:recipientUserId,reason,detail:{contractId:published.id,contractVersion:published.version,documentHash:published.hash,fileName:published.fileName,format:published.format,title:published.title,source:published.reused?'existing-version':'admin-dashboard'}});
       return {contract:published,reused:published.reused,active:published.active};
     });
   }

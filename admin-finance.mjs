@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {createProgressiveFinance,progressivePolicy} from './progressive-finance.mjs';
 
 export class AdminFinanceError extends Error {
   constructor(status, message, code) { super(message); this.status = status; if (code) this.code = code; }
@@ -112,6 +113,10 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     CREATE TRIGGER IF NOT EXISTS sponsored_client_payout_requests_no_delete BEFORE DELETE ON sponsored_client_payout_requests
       BEGIN SELECT RAISE(ABORT,'Client payout requests are immutable'); END;`);
 
+  const firstNameColumn=db.prepare('PRAGMA table_info(users)').all().some(column=>column.name==='first_name')?'u.first_name':'NULL';
+  const identityColumns=`u.name AS trader_name,u.email AS trader_email,${firstNameColumn} AS trader_first_name`;
+  const progressive=createProgressiveFinance(db,{access,workflows,now,transaction,accountRow,accountView,payoutRow,payoutView});
+
   function transaction(actorId, work, { client = false } = {}) {
     const ownsTransaction = !db.isTransaction;
     if (ownsTransaction) db.exec('BEGIN IMMEDIATE');
@@ -127,7 +132,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     return target;
   }
   function accountRow(accountId) {
-    const row = db.prepare('SELECT a.*,u.name AS trader_name,u.email AS trader_email FROM sponsored_accounts a JOIN users u ON u.id=a.user_id WHERE a.id=?').get(id(accountId, 'sponsored account'));
+    const row = db.prepare(`SELECT a.*,${identityColumns} FROM sponsored_accounts a JOIN users u ON u.id=a.user_id WHERE a.id=?`).get(id(accountId, 'sponsored account'));
     if (!row) fail(404, 'Sponsored account not found.');
     return row;
   }
@@ -135,20 +140,22 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     const statementRows = db.prepare('SELECT net_profit_cents,trader_share_cents,high_water_profit_cents FROM sponsored_statements WHERE account_id=?').all(accountId);
     let net = 0n, earned = 0n, high = 0;
     for (const row of statementRows) { net += BigInt(row.net_profit_cents); earned += BigInt(row.trader_share_cents); high = Math.max(high, row.high_water_profit_cents); }
+    const cleared=progressive.earnings(accountId);earned+=BigInt(cleared.earned);
     let reserved = 0n, paid = 0n;
     for (const row of db.prepare("SELECT amount_cents,status FROM sponsored_payouts WHERE account_id=? AND status!='rejected'").all(accountId)) {
       if (row.status === 'paid') paid += BigInt(row.amount_cents); else reserved += BigInt(row.amount_cents);
     }
     const available = earned - reserved - paid;
     if (available < 0n) fail(409, 'Stored payout reservations exceed the recorded trader share. Review the ledger.');
-    return { cumulativeNetProfitCents: safeNumber(net, 'Cumulative profit'), highWaterProfitCents: high, earnedCents: safeNumber(earned, 'Earned share'), reservedCents: safeNumber(reserved, 'Reserved payouts'), paidCents: safeNumber(paid, 'Recorded payments'), availableCents: safeNumber(available, 'Available share') };
+    return { qualifyingNetPayoutsCents:cleared.net,cumulativeNetProfitCents: safeNumber(net, 'Cumulative profit'), highWaterProfitCents: high, earnedCents: safeNumber(earned, 'Earned share'), reservedCents: safeNumber(reserved, 'Reserved payouts'), paidCents: safeNumber(paid, 'Recorded payments'), availableCents: safeNumber(available, 'Available share') };
   }
   function accountView(row, { client = false } = {}) {
     const result = { id: row.id, userId: row.user_id, firmName: row.firm_name, label: row.label, accountSizeCents: row.account_size_cents,
       traderShareBps: row.trader_share_bps, profitSharingPolicy: row.profit_sharing_policy, currency: row.currency, status: row.status,
       revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, ...balance(row.id), source: recordSource,
       review: { reviewId: row.review_id, reviewRevision: row.review_revision, certificateId: row.certificate_id, contractId: row.contract_id, contractVersion: row.contract_version, contractHash: row.contract_hash, signatureId: row.signature_id } };
-    if (!client) Object.assign(result, { traderName: row.trader_name, traderEmail: row.trader_email, evidence: row.evidence });
+    Object.assign(result,progressive.accountTerms(row.id,{client}));
+    if (!client) Object.assign(result, { traderName: row.trader_name, traderFirstName:typeof row.trader_first_name==='string'?row.trader_first_name:null, traderEmail: row.trader_email, evidence: row.evidence });
     return result;
   }
   function statementView(row, { client = false } = {}) {
@@ -160,7 +167,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     return result;
   }
   function payoutRow(payoutId) {
-    const row = db.prepare('SELECT p.*,a.firm_name,a.label,u.name AS trader_name,u.email AS trader_email FROM sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id JOIN users u ON u.id=p.user_id WHERE p.id=?').get(id(payoutId, 'payout'));
+    const row = db.prepare(`SELECT p.*,a.firm_name,a.label,${identityColumns} FROM sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id JOIN users u ON u.id=p.user_id WHERE p.id=?`).get(id(payoutId, 'payout'));
     if (!row) fail(404, 'Payout record not found.');
     return row;
   }
@@ -170,7 +177,8 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     const result = { id: row.id, accountId: row.account_id, userId: row.user_id, firmName: row.firm_name, label: row.label, amountCents: row.amount_cents,
       currency: row.currency, status: row.status, revision: row.revision, paidAt: row.paid_at, createdAt: row.created_at, updatedAt: row.updated_at,
       source: 'manual_external_payment_record', requestOrigin, history, transfersMoney: false };
-    if (!client) Object.assign(result, { traderName: row.trader_name, traderEmail: row.trader_email, externalPaymentReference: row.external_payment_reference });
+    Object.assign(result,progressive.payoutTerms(row,{client}));
+    if (!client) Object.assign(result, { traderName: row.trader_name, traderFirstName:typeof row.trader_first_name==='string'?row.trader_first_name:null, traderEmail: row.trader_email, externalPaymentReference: row.external_payment_reference });
     return result;
   }
   function pagedRows(query, kind) {
@@ -191,7 +199,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     const from = kind === 'accounts' ? 'sponsored_accounts a JOIN users u ON u.id=a.user_id' : 'sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id JOIN users u ON u.id=p.user_id';
     const conditions = where.length ? ` WHERE ${where.join(' AND ')}` : '';
     const total = db.prepare(`SELECT count(*) total FROM ${from}${conditions}`).get(...params).total;
-    const fields = kind === 'accounts' ? 'a.*,u.name AS trader_name,u.email AS trader_email' : 'p.*,a.firm_name,a.label,u.name AS trader_name,u.email AS trader_email';
+    const fields = kind === 'accounts' ? `a.*,${identityColumns}` : `p.*,a.firm_name,a.label,${identityColumns}`;
     const rows = db.prepare(`SELECT ${fields} FROM ${from}${conditions} ORDER BY ${alias}.created_at DESC,${alias}.id LIMIT ? OFFSET ?`).all(...params, limit, offset);
     return { [kind]: rows.map(row => kind === 'accounts' ? accountView(row) : payoutView(row)), total, limit, offset, nextOffset: offset + rows.length < total ? offset + rows.length : null };
   }
@@ -200,21 +208,25 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
   function accountDetail(accountId) {
     const row = accountRow(accountId);
     const statements = db.prepare('SELECT * FROM sponsored_statements WHERE account_id=? ORDER BY created_at DESC,id DESC LIMIT 200').all(row.id);
-    const payoutRecords = db.prepare('SELECT p.*,a.firm_name,a.label,u.name AS trader_name,u.email AS trader_email FROM sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id JOIN users u ON u.id=p.user_id WHERE p.account_id=? ORDER BY p.created_at DESC,p.id DESC LIMIT 200').all(row.id);
-    return { account: accountView(row), statements: statements.map(row => statementView(row)), payouts: payoutRecords.map(row => payoutView(row)), statementsTotal: db.prepare('SELECT count(*) total FROM sponsored_statements WHERE account_id=?').get(row.id).total, payoutsTotal: db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE account_id=?').get(row.id).total, historyLimit: 200 };
+    const payoutRecords = db.prepare(`SELECT p.*,a.firm_name,a.label,${identityColumns} FROM sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id JOIN users u ON u.id=p.user_id WHERE p.account_id=? ORDER BY p.created_at DESC,p.id DESC LIMIT 200`).all(row.id);
+    return { ...progressive.accountData(row.id), account: accountView(row), statements: statements.map(row => statementView(row)), payouts: payoutRecords.map(row => payoutView(row)), statementsTotal: db.prepare('SELECT count(*) total FROM sponsored_statements WHERE account_id=?').get(row.id).total, payoutsTotal: db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE account_id=?').get(row.id).total, historyLimit: 200 };
   }
   function createAccount(actorId, data) {
     unknownKeys(data, ['userId','firmName','label','accountSizeCents','traderShareBps','profitSharingPolicy','evidence','reason']);
     const userId = integer(data.userId, 'Trader ID', 1, Number.MAX_SAFE_INTEGER), firmName = text(data.firmName, 'prop firm name', 120), label = text(data.label, 'account label', 120);
-    const size = integer(data.accountSizeCents, 'Account size in cents', 1, maxMoney), bps = integer(data.traderShareBps, 'Trader share in basis points', 0, 10000);
-    if (!policies.includes(data.profitSharingPolicy)) fail(400, 'Select the profit-sharing policy required by the signed agreement.');
+    const size = integer(data.accountSizeCents, 'Account size in cents', 1, maxMoney);
+    if (![...policies,progressivePolicy].includes(data.profitSharingPolicy)) fail(400, 'Select the profit-sharing policy required by the signed agreement.');
     const evidence = text(data.evidence, 'external account evidence', 2000), why = reason(data.reason);
     return transaction(actorId, () => {
       const approved = workflows.requireApproved(userId);
       if (approved.userId !== userId || !approved.reviewId || !approved.certificateId || !approved.contractId || !approved.contractVersion || !approved.contractHash || !approved.signatureId || !Number.isSafeInteger(approved.reviewRevision)) fail(409, 'A valid current sponsorship approval is required.');
+      const relationship=progressive.prepareAccount(actorId,userId,approved,data.profitSharingPolicy,data.traderShareBps);
+      const bps=relationship?relationship.current_tier_bps:integer(data.traderShareBps,'Trader share in basis points',0,10000);
+      const storedPolicy=relationship?'settled_period':data.profitSharingPolicy;
       const accountId = randomUUID(), time = now();
       db.prepare(`INSERT INTO sponsored_accounts(id,user_id,firm_name,label,label_key,account_size_cents,trader_share_bps,profit_sharing_policy,status,review_id,review_revision,certificate_id,contract_id,contract_version,contract_hash,signature_id,evidence,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(accountId,userId,firmName,label,`${firmName.toLowerCase()}:${label.toLowerCase()}`,size,bps,data.profitSharingPolicy,String(approved.reviewId),approved.reviewRevision,approved.certificateId,approved.contractId,approved.contractVersion,approved.contractHash,approved.signatureId,evidence,actorId,time,time);
+        .run(accountId,userId,firmName,label,`${firmName.toLowerCase()}:${label.toLowerCase()}`,size,bps,storedPolicy,String(approved.reviewId),approved.reviewRevision,approved.certificateId,approved.contractId,approved.contractVersion,approved.contractHash,approved.signatureId,evidence,actorId,time,time);
+      progressive.linkAccount(accountId,relationship);
       access.audit(actorId, 'finance.account-created', { targetId: userId, reason: why, detail: { accountId, accountSizeCents: size, traderShareBps: bps, currency: 'USD', reviewId: String(approved.reviewId), contractId: approved.contractId, contractVersion: approved.contractVersion, certificateId: approved.certificateId } });
       return { account: accountView(accountRow(accountId)) };
     });
@@ -243,14 +255,15 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     return transaction(actorId, () => {
       const row = accountRow(accountId);
       if (row.status === 'closed') fail(409, 'Record the final statement before closing this account.');
-      if (row.profit_sharing_policy === 'settled_period') {
+      const isProgressive=progressive.accountTerms(row.id).sharingModel===progressivePolicy;
+      if (!isProgressive&&row.profit_sharing_policy === 'settled_period') {
         if (data.externalSettlementConfirmed !== true || !start || !end) fail(400, 'Settled-period sharing requires a settled external statement and its complete period dates.');
         if (end > new Date(now()).toISOString().slice(0, 10)) fail(400, 'An externally settled period cannot end after the current UTC date.');
         if (db.prepare('SELECT 1 FROM sponsored_statements WHERE account_id=? AND period_start<=? AND period_end>=? LIMIT 1').get(row.id,end,start)) fail(409, 'An external settled statement already covers part of that period.');
       }
       const previous = balance(row.id), cumulative = safeNumber(BigInt(previous.cumulativeNetProfitCents) + BigInt(net), 'Cumulative profit');
       const high = Math.max(previous.highWaterProfitCents, cumulative, 0);
-      const share = row.profit_sharing_policy === 'cumulative_high_water' ? roundedShare(high,row.trader_share_bps) - roundedShare(previous.highWaterProfitCents,row.trader_share_bps) : roundedShare(net,row.trader_share_bps);
+      const share = isProgressive ? 0 : row.profit_sharing_policy === 'cumulative_high_water' ? roundedShare(high,row.trader_share_bps) - roundedShare(previous.highWaterProfitCents,row.trader_share_bps) : roundedShare(net,row.trader_share_bps);
       safeNumber(BigInt(previous.earnedCents) + BigInt(share), 'Earned share');
       const company = net - share, statementId = randomUUID(), time = now();
       db.prepare(`INSERT INTO sponsored_statements(id,account_id,user_id,net_profit_cents,trader_share_cents,company_share_cents,cumulative_net_profit_cents,high_water_profit_cents,external_reference,reference_key,evidence,period_start,period_end,external_settlement_confirmed,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -268,6 +281,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
       if (balance(row.id).availableCents < amount) fail(409, 'The payout exceeds the unreserved recorded trader share.');
       const payoutId = randomUUID(), time = now();
       db.prepare("INSERT INTO sponsored_payouts(id,account_id,user_id,amount_cents,status,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,'requested',?,?,?,?)").run(payoutId,row.id,row.user_id,amount,actorId,actorId,time,time);
+      progressive.allocatePayout(row,payoutId,amount);
       payoutEvent(actorId,payoutId,null,'requested',why);
       access.audit(actorId,'finance.payout-requested',{targetId:row.user_id,reason:why,detail:{accountId:row.id,payoutId,amountCents:amount,currency:'USD',status:'requested'}});
       return { payout: payoutView(payoutRow(payoutId)), account: accountView(accountRow(row.id)) };
@@ -293,6 +307,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
       const payoutId = randomUUID(), time = now(), why = 'Trader requested payment of their recorded earned share.';
       db.prepare("INSERT INTO sponsored_payouts(id,account_id,user_id,amount_cents,status,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,'requested',?,?,?,?)").run(payoutId,row.id,target,amount,target,target,time,time);
       db.prepare('INSERT INTO sponsored_client_payout_requests(user_id,request_key_hash,account_id,amount_cents,payout_id,created_at) VALUES (?,?,?,?,?,?)').run(target,keyHash,row.id,amount,payoutId,time);
+      progressive.allocatePayout(row,payoutId,amount);
       payoutEvent(target,payoutId,null,'requested',why);
       access.audit(target,'finance.payout-requested',{targetId:target,reason:why,detail:{accountId:row.id,payoutId,amountCents:amount,currency:'USD',status:'requested',source:'client-dashboard'}});
       return {payout:payoutView(payoutRow(payoutId),{client:true}),account:accountView(row,{client:true}),reused:false};
@@ -313,6 +328,7 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
         if (!paymentReference) fail(400, 'Record the external payment reference before marking this payout paid.');
         paidAt = integer(data.paidAt, 'External payment time', row.created_at, now(), now());
       }
+      progressive.assertPayoutChange(row,data.status,paidAt);
       db.prepare('UPDATE sponsored_payouts SET status=?,external_payment_reference=?,payment_reference_key=?,paid_at=?,updated_by=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?').run(data.status,paymentReference,paymentReference?.toLowerCase() ?? null,paidAt,actorId,now(),row.id,revision);
       payoutEvent(actorId,row.id,row.status,data.status,why);
       access.audit(actorId,`finance.payout-${data.status}`,{targetId:row.user_id,reason:why,detail:{accountId:row.account_id,payoutId:row.id,amountCents:row.amount_cents,currency:'USD',previousStatus:row.status,status:data.status,revision:revision+1,...(paymentReference ? {externalPaymentReference:paymentReference} : {})}});
@@ -323,14 +339,15 @@ export function createAdminFinance(db, { access, workflows, now = Date.now } = {
     const target = integer(userId, 'Trader ID', 1, Number.MAX_SAFE_INTEGER);
     const rows = db.prepare('SELECT a.* FROM sponsored_accounts a WHERE a.user_id=? ORDER BY a.created_at DESC,a.id LIMIT 100').all(target);
     const ownPayouts = db.prepare('SELECT p.*,a.firm_name,a.label FROM sponsored_payouts p JOIN sponsored_accounts a ON a.id=p.account_id WHERE p.user_id=? ORDER BY p.created_at DESC,p.id LIMIT 100').all(target);
-    return { accounts: rows.map(row => accountView(row,{client:true})), payouts: ownPayouts.map(row => payoutView(row,{client:true})), accountsTotal: db.prepare('SELECT count(*) total FROM sponsored_accounts WHERE user_id=?').get(target).total, payoutsTotal: db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE user_id=?').get(target).total, historyLimit:100, source:recordSource, transfersMoney:false };
+    return { ...progressive.clientData(target), accounts: rows.map(row => accountView(row,{client:true})), payouts: ownPayouts.map(row => payoutView(row,{client:true})), accountsTotal: db.prepare('SELECT count(*) total FROM sponsored_accounts WHERE user_id=?').get(target).total, payoutsTotal: db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE user_id=?').get(target).total, historyLimit:100, source:recordSource, transfersMoney:false };
   }
   function summary() {
     const accountCounts = Object.fromEntries(accountStatuses.map(status => [status,db.prepare('SELECT count(*) total FROM sponsored_accounts WHERE status=?').get(status).total]));
     let earned = 0n, reserved = 0n, paid = 0n, net = 0n;
     for (const row of db.prepare('SELECT net_profit_cents,trader_share_cents FROM sponsored_statements').all()) {net+=BigInt(row.net_profit_cents);earned+=BigInt(row.trader_share_cents);}
+    const cleared=progressive.portfolio();earned+=BigInt(cleared.earned);
     for (const row of db.prepare("SELECT amount_cents,status FROM sponsored_payouts WHERE status!='rejected'").all()) {if(row.status==='paid')paid+=BigInt(row.amount_cents);else reserved+=BigInt(row.amount_cents);}
-    return { accounts:accountCounts,payouts:Object.fromEntries(payoutStatuses.map(status=>[status,db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE status=?').get(status).total])),netProfitCents:safeNumber(net,'Portfolio net profit'),earnedCents:safeNumber(earned,'Portfolio earned share'),reservedCents:safeNumber(reserved,'Portfolio reservations'),paidCents:safeNumber(paid,'Portfolio payments'),availableCents:safeNumber(earned-reserved-paid,'Portfolio available share'),currency:'USD',source:recordSource,transfersMoney:false };
+    return { qualifyingNetPayoutsCents:cleared.net,accounts:accountCounts,payouts:Object.fromEntries(payoutStatuses.map(status=>[status,db.prepare('SELECT count(*) total FROM sponsored_payouts WHERE status=?').get(status).total])),netProfitCents:safeNumber(net,'Portfolio net profit'),earnedCents:safeNumber(earned,'Portfolio earned share'),reservedCents:safeNumber(reserved,'Portfolio reservations'),paidCents:safeNumber(paid,'Portfolio payments'),availableCents:safeNumber(earned-reserved-paid,'Portfolio available share'),currency:'USD',source:recordSource,transfersMoney:false };
   }
-  return { accounts,accountDetail,createAccount,updateAccount,recordStatement,payouts,createPayout,createClientPayout,updatePayout,clientView,summary };
+  return { accounts,accountDetail,createAccount,updateAccount,recordStatement,payouts,createPayout,createClientPayout,updatePayout,clientView,summary,recordClearedReceipt:progressive.recordClearedReceipt,initiatePayout:progressive.initiatePayout,prepareReinstatement:progressive.prepareReinstatement,updateRelationship:progressive.updateRelationship,profitSharing:progressive.profitSharing,processingSummary:progressive.processingSummary };
 }

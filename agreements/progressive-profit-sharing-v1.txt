@@ -1,0 +1,75 @@
+FUNDRAISER ACADEMY
+
+Revised Agreement — Progressive Profit Sharing and Tier Retention
+
+Section: Profit Sharing, Progression, and Sponsored Account Portability
+
+1. Initial Profit-Sharing Arrangement
+
+Upon successful completion of the applicable qualification requirements and receipt of an eligible payout from a sponsored proprietary trading firm, the Trader and Fundraiser Academy (the "Company") shall share distributable trading proceeds according to the Trader's applicable profit-sharing tier.
+
+Every newly admitted Trader shall begin at the initial profit-sharing tier of fifty percent (50%) to the Trader and fifty percent (50%) to the Company.
+
+2. Progressive Profit-Sharing Structure
+
+The Trader shall become eligible for increased profit-sharing percentages based on cumulative qualifying net payouts received by the Company and attributable to the Trader's performance across all eligible Company-sponsored trading accounts.
+
+| Cumulative Qualifying Net Payouts | Trader's Share | Company's Share |
+| --------------------------------- | -------------- | --------------- |
+| Below $10,000                     | 50%            | 50%             |
+| $10,000 to below $25,000          | 60%            | 40%             |
+| $25,000 and above                 | 70%            | 30%             |
+
+For the purposes of this Agreement, "Qualifying Net Payouts" means amounts actually received and cleared by the Company from the relevant proprietary trading firm, attributable to the Trader, after deductions made by that firm and any agreed third-party transaction charges, but before distribution between the Trader and the Company.
+
+3. Tier Advancement
+
+A Trader shall advance to the next profit-sharing tier once cumulative Qualifying Net Payouts reach the applicable threshold.
+
+The upgraded percentage shall apply to the next eligible payout received after the threshold has been reached and to subsequent eligible payouts. Previously distributed payouts shall not be recalculated.
+
+4. Permanent Tier Retention Across Sponsored Accounts
+
+Once a Trader attains a higher profit-sharing tier, that tier shall remain applicable throughout the Trader's continuous contractual relationship with the Company.
+
+The applicable tier shall:
+
+- Remain valid across all eligible Company-sponsored trading accounts.
+- Remain valid when the Company sponsors additional evaluations or funded trading opportunities for the Trader.
+- Remain valid when the Trader transitions between proprietary trading firms approved by the Company.
+- Not be reduced solely because an account is closed, fails an evaluation, or experiences trading losses.
+- Not reset when the Trader receives a new sponsored account.
+
+All qualifying payouts from eligible sponsored accounts shall be aggregated for the purpose of determining the Trader's progression.
+
+5. Maximum Profit-Sharing Tier
+
+The maximum Trader profit-sharing entitlement under this Agreement shall be seventy percent (70%), unless otherwise agreed in writing by both Parties.
+
+6. Sponsorship Costs and Trading Losses
+
+The Company shall bear the agreed costs of sponsored proprietary trading firm evaluations and shall not require the Trader to reimburse ordinary evaluation failures or trading losses arising from permitted trading activities.
+
+This provision shall not excuse fraud, deliberate misconduct, or other material breaches of this Agreement. Any recovery of losses or expenses arising from such conduct shall be subject to applicable law and the express remedies provided in this Agreement.
+
+7. Payout Processing
+
+The Company shall calculate the Trader's entitlement using the applicable profit-sharing tier and initiate payment within three (3) business days following the Company's receipt of cleared funds from the relevant proprietary trading firm.
+
+The Company shall provide a payout statement identifying the amount received, applicable profit-sharing tier, Trader entitlement, Company entitlement, and updated cumulative Qualifying Net Payouts.
+
+8. Account Compliance
+
+All sponsorship arrangements, account operations, and profit distributions shall remain subject to the applicable proprietary trading firm's rules and any required authorizations.
+
+Nothing in this Agreement shall authorize third-party account control, account sharing, trading, or payout arrangements prohibited by the relevant proprietary trading firm.
+
+9. Termination and Reinstatement
+
+An earned profit-sharing tier shall remain effective during the Trader's continuous contractual relationship with the Company.
+
+Upon termination, any accrued and unpaid entitlements shall remain payable subject to the terms of this Agreement. Whether a previously earned tier applies following a new agreement or reinstatement shall be expressly determined in writing before the new sponsorship begins.
+
+10. Amendments
+
+The Company shall not unilaterally reduce an earned profit-sharing tier during an active contractual relationship. Any amendment affecting the Trader's earned tier shall require the written agreement of both Parties.

@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {amountToCents,collectPersonalData} from '../public/account-tools.js';
+import {createProfitSharingView,payoutStatement,payoutProcessingText} from '../public/profit-sharing-view.js';
 
 const html=readFileSync(new URL('../public/account-tools.html',import.meta.url),'utf8');
-const script=readFileSync(new URL('../public/account-tools.js',import.meta.url),'utf8').replace(/^export /gm,'');
+const script=readFileSync(new URL('../public/account-tools.js',import.meta.url),'utf8').replace(/^import .*;\s*$/gm,'').replace(/^export /gm,'');
 const time=Date.UTC(2026,9,22,10);
 const profile={id:7,name:'Trader',email:'trader@example.com'};
 function exportPage(offset=0,limit=2){
@@ -70,6 +71,7 @@ function fixture(handler=()=>null,{factor=true,storage=new Map()}={}){
   fetch:async(endpoint,options={})=>{const data=options.body?JSON.parse(options.body):undefined;calls.push({endpoint,data,options});const override=await handler(endpoint,data);const value=override??{status:200,body:defaults(endpoint)};return {status:value.status,ok:value.status>=200&&value.status<300,json:async()=>value.body};},
   sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},crypto:{randomUUID:()=> '64e0751f-22ca-4353-89dc-b73c7b4bd3d7'},
   AbortSignal,TextEncoder,Blob,URL:{createObjectURL:blob=>{downloads.push(blob);return'blob:private';},revokeObjectURL(){}},setTimeout:()=>0,
+  createProfitSharingView,payoutStatement,payoutProcessingText,
  });
  return {nodes,calls,storage,downloads,async settle(){for(let i=0;i<70;i++)await Promise.resolve();},async click(id){await nodes.get(id).event('click');},async submit(id){await nodes.get(id).event('submit');},async pagehide(){await events.get('pagehide')({});},async pageshow(){await events.get('pageshow')({persisted:true});}};
 }
@@ -112,4 +114,14 @@ test('leaving during reauthentication clears private records and prevents a late
  page.nodes.get('payout-account').value=funding.accounts[0].id;page.nodes.get('payout-amount').value='1';await page.submit('payout-request-form');page.nodes.get('tools-auth-password').value='Password';page.nodes.get('tools-auth-code').value='345678';const submission=page.submit('tools-auth-form');await page.settle();await page.pagehide();
  assert.equal(page.nodes.get('tools-main').hidden,true);assert.equal(page.nodes.get('payout-history').children.length,0);assert.equal(page.nodes.get('tools-auth-password').value,'');
  await page.pageshow();await page.settle();resolveAuth({status:200,body:{expiresAt:Date.now()+300000}});await submission;await page.settle();assert.equal(page.calls.some(call=>call.endpoint==='/api/payouts/request'),false);
+});
+
+test('account controls show retained progression and download a verified own payout statement without staff metadata',async()=>{
+ const receipt={id:'3b2fb4e4-4b55-44bb-9ce4-d4bbb2066347',accountId:funding.accounts[0].id,relationshipId:'64e0751f-22ca-4353-89dc-b73c7b4bd3d7',amountReceivedCents:1000000,thirdPartyChargesCents:0,qualifyingNetPayoutCents:1000000,appliedTraderShareBps:5000,traderShareCents:500000,companyShareCents:500000,cumulativeBeforeCents:0,cumulativeAfterCents:1000000,nextTraderShareBps:6000,clearedAt:time,initiationDueAt:time+5*86400000,initiatedCents:0,outstandingCents:500000,overdue:false,evidence:'PRIVATE STAFF EVIDENCE',email:'private-other@example.com'};
+ const details={...funding,progressions:[{id:receipt.relationshipId,status:'active',currentTraderShareBps:6000,currentCompanyShareBps:4000,cumulativeQualifyingNetPayoutsCents:1000000,nextThresholdCents:2500000,nextTraderShareBps:7000}],receipts:[receipt],receiptsTotal:1,accounts:[{...funding.accounts[0],sharingModel:'progressive_cleared',traderShareBps:6000}],payouts:[{id:'recorded',label:'Allocation',status:'approved',amountCents:1000,createdAt:time,initiationDueAt:time+5*86400000,overdue:false}]};
+ const page=fixture(endpoint=>endpoint==='/api/payouts'?{status:200,body:details}:null);await page.settle();
+ const panel=page.nodes.get('payout-profit-sharing');assert.match(panel.textContent,/60%/);assert.match(panel.textContent,/Applied fundraiser share50%/);assert.doesNotMatch(panel.textContent,/PRIVATE STAFF|private-other/);assert.match(page.nodes.get('payout-history').textContent,/Initiation due/);
+ page.nodes.get('payout-account').value=details.accounts[0].id;await page.nodes.get('payout-account').event('change');assert.match(page.nodes.get('payout-account-detail').textContent,/60% on your next eligible cleared payout/);
+ const all=element=>[element,...element.children.flatMap(all)];const button=all(panel).find(item=>item.tagName==='button');await button.event('click');assert.equal(page.downloads.length,1);const downloaded=JSON.parse(await page.downloads[0].text());assert.equal(downloaded.appliedTraderShareBps,5000);assert.equal(downloaded.nextTraderShareBps,6000);assert.doesNotMatch(JSON.stringify(downloaded),/PRIVATE STAFF|private-other|evidence/);
+ await page.pagehide();assert.equal(panel.children.length,0,'private receipt cards clear when the page is hidden');
 });

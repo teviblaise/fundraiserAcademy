@@ -52,7 +52,7 @@ if(!isMainThread&&workerData?.task==='academy-operational-inspection'){
 }
 
 /** Private, aggregate readiness checks. No provider request or user-data repair is performed. */
-export function createOperationalHealth(db,databasePath,{now=Date.now,operations,sponsored,configuration=()=>({emailAvailable:false,forexConfigured:false}),observer=false,diagnosticTimeoutMs=10000,storageStats=statfsSync,diagnosticScript=fileURLToPath(import.meta.url),diagnosticWorkerScript=fileURLToPath(import.meta.url)}={}){
+export function createOperationalHealth(db,databasePath,{now=Date.now,operations,sponsored,configuration=()=>({emailAvailable:false,forexConfigured:false}),paymentProcessing,observer=false,diagnosticTimeoutMs=10000,storageStats=statfsSync,diagnosticScript=fileURLToPath(import.meta.url),diagnosticWorkerScript=fileURLToPath(import.meta.url)}={}){
   if(typeof now!=='function'||!operations?.status||typeof configuration!=='function'||typeof storageStats!=='function'||!Number.isSafeInteger(diagnosticTimeoutMs)||diagnosticTimeoutMs<10||diagnosticTimeoutMs>30000||[diagnosticScript,diagnosticWorkerScript].some(script=>typeof script!=='string'||!path.isAbsolute(script)))throw new TypeError('Provide operational status services, local diagnostic scripts, and a timeout of 10–30000 milliseconds.');
   const source=path.resolve(databasePath),directory=path.dirname(source);
   db.exec(`CREATE TABLE IF NOT EXISTS operations_diagnostic_runs (
@@ -137,6 +137,14 @@ export function createOperationalHealth(db,databasePath,{now=Date.now,operations
         else add('metaapi','Sponsored-account synchronization','ok',`${linked} active connections have recent successful observations and no recorded errors.`);
       }catch{add('metaapi','Sponsored-account synchronization','warning','Sponsored-account synchronization totals are unavailable.','Inspect application schema and database health.');}
     }
+    if(typeof paymentProcessing==='function'){
+      try{
+        const payments=paymentProcessing();
+        if(!payments||!['overdueReceipts','uninitiatedTraderShareCents','overdueTraderShareCents'].every(key=>Number.isSafeInteger(payments[key])&&payments[key]>=0))throw new Error();
+        const overdue=payments.overdueReceipts>0,uninitiated=payments.uninitiatedTraderShareCents>0;
+        add('payout-processing','Cleared-funds payment deadlines',overdue?'critical':uninitiated?'warning':'ok',`${payments.overdueReceipts} cleared receipts have overdue payment initiation; USD ${(payments.overdueTraderShareCents/100).toFixed(2)} is overdue and USD ${(payments.uninitiatedTraderShareCents/100).toFixed(2)} awaits initiation.`,overdue||uninitiated?'Review cleared receipt statements and initiate the outstanding payments externally within three business days (Monday–Friday, Africa/Lagos). Record actual initiation evidence; a withdrawal request or approval does not satisfy the deadline.':'No outstanding progressive payment initiation is recorded.');
+      }catch{add('payout-processing','Cleared-funds payment deadlines','warning','Current payment-initiation obligations could not be measured.','Review the finance ledger and cleared receipt deadlines.');}
+    }else add('payout-processing','Cleared-funds payment deadlines','disabled','This observer does not collect progressive payout obligations.','Review cleared receipt deadlines in the running admin dashboard.');
     const open=integer(op?.errors?.open);if(op)add('incidents','Unresolved server incidents',open?'warning':'ok',`${open} sanitized server-error groups are open.`,open?'Review the incident list and resolve groups after investigating the cause.':'No action needed.');else add('incidents','Unresolved server incidents','warning','The current incident count is unavailable.','Inspect the incident service and database health.');
     const diagnosticRuns=runs(),lastDiagnostic=diagnosticRuns.find(item=>item.state!=='running')||null;
     if(lastDiagnostic?.state==='critical')add('diagnostics','Latest integrity diagnostic','critical','The latest completed integrity or writable-storage check failed.','Review its fixed failure code, correct the underlying issue, and run diagnostics again.');

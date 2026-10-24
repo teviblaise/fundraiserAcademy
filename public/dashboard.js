@@ -2,6 +2,7 @@ import { MARKETS, quote, quoteIsExecutable, marketDependencies, rawQuoteFresh, p
 import {showContractNextStep} from './contract-status.js';
 import {createMarketReference} from './market-reference.js';
 import {createAccountFeed, createAccountOrderGuard} from './account-feed.js';
+import {fundraiserName} from './fundraiser-name.js';
 
 const $ = id => document.getElementById(id);
 let account;
@@ -39,7 +40,7 @@ function renderOrderStatus(m = metrics(account)) {
   let paused = '';
   if (!orderSubmitting) {
     if (account.migrationRequired) paused = 'This previous attempt is read only. Use Start reference-priced attempt to begin trading with reference prices.';
-    else if (account.locked) paused = account.locked === 'Profit target achieved' ? 'Assessment completed. Visit Trader agreement for the next required step.' : `Trading is locked: ${account.locked}. See the risk monitor for details.`;
+    else if (account.locked) paused = account.locked === 'Profit target achieved' ? 'Assessment completed. Visit the academy agreement for the next required step.' : `Trading is locked: ${account.locked}. See the risk monitor for details.`;
     else if (!executionReady()) {
       const missing = marketDependencies(selected).filter(symbol => !rawQuoteFresh(account, symbol));
       paused = `Trading is paused until fresh ${missing.join(', ') || selected} references are available. See the reference status above.`;
@@ -67,7 +68,7 @@ try {
   }
   traderId=result.user.id;
   applyAccount((await api('/api/account')).account);
-  $('trader-name').textContent = `Welcome, ${result.user.name}. Your practice account is saved on the server.`;
+  $('trader-name').textContent = `Welcome, ${fundraiserName(result.user)}. Your practice account is saved on the server.`;
   document.querySelector('main').hidden = false;
 } catch (error) {
   if (!account) { window.location.replace('/login.html'); await new Promise(() => {}); }
