@@ -18,6 +18,7 @@ import QRCode from 'qrcode';
 import {createAdminAccess} from './admin-access.mjs';
 import {createAdminConsole} from './admin.mjs';
 import {createAccountPlatform} from './account-platform.mjs';
+import {parseTrustProxyHops,requestClientAddress} from './network-security.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const sessionLifetime = 7 * 86400000;
@@ -54,6 +55,7 @@ function registrationName(data) {
 }
 const publicUser = (row, emailVerified) => ({ id: row.id, name: row.name, firstName: row.first_name, otherNames: row.other_names, email: row.email, market: row.market, createdAt: row.created_at, emailVerified, emailConfirmationRequired: Boolean(row.email_confirmation_required), assessmentAccess: !row.email_confirmation_required || emailVerified });
 export function createBackend(databasePath, { marketData: injectedMarketData, deliveryOptions, supportOptions, adminOptions, platformOptions, agreementOptions, passwordScrypt = nativeScrypt, qrEncoder = (uri, options) => QRCode.toDataURL(uri, options), twoFactorOptions, now = Date.now, tickMs = 5000, autoTick = true, streamTickMs = 1000 } = {}) {
+  const trustedProxyHops = parseTrustProxyHops(process.env.TRUST_PROXY_HOPS);
   if (!Number.isFinite(streamTickMs) || streamTickMs < 10 || streamTickMs > 60000) throw new TypeError('Live account refresh must be between 10 and 60000 milliseconds.');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -118,7 +120,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
   const rates = new Map();
   const respond = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(data)); };
   function limit(req, group, max, duration) {
-    limitKey(`${req.socket.remoteAddress}:${group}`, max, duration);
+    limitKey(`${requestClientAddress(req,trustedProxyHops)}:${group}`, max, duration);
   }
   function limitKey(key, max, duration) {
     const now = Date.now(); const value = rates.get(key);

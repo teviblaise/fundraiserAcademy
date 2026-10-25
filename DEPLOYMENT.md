@@ -100,6 +100,33 @@ Use a process manager to restart the app after server reboots. Expose it through
 an HTTPS reverse proxy; the Node server defaults to port 3000. Do not expose the
 data directory as web content. Supply secrets using the host's environment settings.
 
+### Reverse proxy client addresses
+
+`TRUST_PROXY_HOPS` defaults to `0`, which rate-limits using the actual socket
+peer and ignores client-supplied forwarded headers. Behind a reverse proxy this
+can group visitors under the proxy's address. Set a positive value only after
+verifying the number of trusted forwarding hops on every route to this server.
+For example, a single controlled proxy that appends the connecting client's IP
+to `X-Forwarded-For` uses `TRUST_PROXY_HOPS=1`. The application selects from the
+right-hand end of the validated address chain, rather than accepting an
+attacker-supplied leftmost address. Malformed or insufficient chains fall back to
+the socket peer.
+
+The proxy must append or overwrite `X-Forwarded-For`, and clients must not be able
+to bypass it and connect to the Node port directly. Restrict that port to the
+proxy, as in the Docker example below. Never guess a hop count from an arbitrary
+request header or enable trust for a directly exposed Node server. For an existing
+Render service, confirm its ingress behavior with Render before setting this
+variable in **Environment** and redeploying. Editing the Blueprint does not update
+an existing service's environment. Rate-limit isolation remains unverified there
+until the actual proxy topology and runtime setting have been checked.
+
+HTTPS deployments send `Strict-Transport-Security: max-age=31536000` when
+`APP_ORIGIN` uses HTTPS, including the automatic Render origin. It deliberately
+does not include subdomains or request HSTS preload registration. All HTTP
+responses carry browser framing and referrer protections; the private agreement
+viewer retains its same-origin document iframe.
+
 ## Deploy with Docker
 
 ```sh

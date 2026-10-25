@@ -4,6 +4,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
+const maximumPushSubscriptions = 10;
+const maximumPendingPushJobs = 100;
+const pushLifetimeMs = 5 * 60000;
 const escapeHtml = value => String(value).replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const accountEmail = ({title,introduction,action,url,footnote}) => `<!doctype html><html lang="en"><body style="margin:0;background:#0b0b0b;color:#ffffff;font-family:Arial,sans-serif"><div style="max-width:560px;margin:32px auto;padding:32px;background:#151515;border:1px solid #303030;border-radius:12px"><p style="margin:0 0 24px;color:#ffd700;font-weight:bold;letter-spacing:2px">FUNDRAISER ACADEMY</p><h1 style="font-size:26px;line-height:1.25">${escapeHtml(title)}</h1><p style="line-height:1.6;color:#dddddd">${escapeHtml(introduction)}</p><p style="margin:28px 0"><a href="${escapeHtml(url)}" style="display:inline-block;padding:14px 20px;background:#ffd700;color:#0b0b0b;text-decoration:none;font-weight:bold;border-radius:6px">${escapeHtml(action)}</a></p><p style="font-size:14px;line-height:1.6;color:#bbbbbb">${escapeHtml(footnote)}</p><p style="font-size:13px;color:#bbbbbb">Your skill. Our backing.</p></div></body></html>`;
 export function validateSubscription(subscription) {
@@ -32,8 +35,19 @@ export function createDelivery(db, databasePath, options={}) {
   if(!db.prepare('PRAGMA table_info(email_verifications)').all().some(column=>column.name==='purpose')) db.exec("ALTER TABLE email_verifications ADD COLUMN purpose TEXT NOT NULL DEFAULT 'notifications'");
   // In-flight work is retried after restart. Email provider idempotency keys suppress duplicate sends.
   db.exec("UPDATE notification_outbox SET status='pending' WHERE status='sending'");
+  // Bound records written by earlier versions too. Routine alerts can be
+  // discarded; verification, recovery and security messages are never pruned.
+  db.prepare(`DELETE FROM push_subscriptions WHERE endpoint IN (
+    SELECT endpoint FROM (SELECT endpoint,ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY endpoint) ordinal FROM push_subscriptions) WHERE ordinal>?
+  )`).run(maximumPushSubscriptions);
+  db.exec("UPDATE notification_outbox SET status='cancelled',payload='{}' WHERE channel='push' AND status='pending' AND NOT EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id=notification_outbox.user_id AND s.endpoint=notification_outbox.target)");
+  db.prepare(`UPDATE notification_outbox SET status='cancelled',payload='{}' WHERE id IN (
+    SELECT id FROM (SELECT id,ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id DESC) ordinal FROM notification_outbox WHERE channel='push' AND status='pending') WHERE ordinal>?
+  )`).run(maximumPendingPushJobs);
+  db.exec("CREATE INDEX IF NOT EXISTS notification_pending_push ON notification_outbox(user_id,id) WHERE channel='push' AND status='pending'");
   const preferences=id=>db.prepare('SELECT email_enabled,verified FROM notification_preferences WHERE user_id=?').get(id)??{email_enabled:0,verified:0};
   const addJob=(id,key,channel,target,payload)=>db.prepare('INSERT OR IGNORE INTO notification_outbox(user_id,notice_key,channel,target,payload,next_at) VALUES (?,?,?,?,?,?)').run(id,key,channel,target,JSON.stringify(payload),now());
+  const trimPendingPush=id=>db.prepare("UPDATE notification_outbox SET status='cancelled',payload='{}' WHERE id IN (SELECT id FROM notification_outbox WHERE user_id=? AND channel='push' AND status='pending' ORDER BY id DESC LIMIT -1 OFFSET ?)").run(id,maximumPendingPushJobs);
   function scrubVerificationJob(job,cancel=false) {
     const payload=JSON.parse(job.payload);
     db.prepare("UPDATE notification_outbox SET payload=?,status=CASE WHEN ? THEN 'cancelled' ELSE status END WHERE id=?").run(JSON.stringify({title:payload.title,key:payload.key,purpose:payload.purpose}),cancel?1:0,job.id);
@@ -104,14 +118,19 @@ export function createDelivery(db, databasePath, options={}) {
   }
   function enqueue(id,state,notices) {
     const prefs=preferences(id);
-    const subscriptions=db.prepare('SELECT endpoint FROM push_subscriptions WHERE user_id=?').all(id);
+    const subscriptions=db.prepare('SELECT endpoint FROM push_subscriptions WHERE user_id=? ORDER BY endpoint LIMIT ?').all(id,maximumPushSubscriptions);
     const email=db.prepare('SELECT email FROM users WHERE id=?').get(id).email;
-    for(const notice of notices) {
+    // Insert oldest first so the pending cap retains the newest alerts even
+    // when the account presents its notification history newest first.
+    const ordered=[...notices].sort((a,b)=>(Number.isSafeInteger(a.createdAt)?a.createdAt:now())-(Number.isSafeInteger(b.createdAt)?b.createdAt:now())||a.id-b.id);
+    for(const notice of ordered) {
       const key=`${state.notificationEpoch}:${notice.id}`;
       // Retained jobs deduplicate state saves; only settings opt-in controls delivery.
       if(prefs.email_enabled && prefs.verified && emailAvailable) addJob(id,key,'email',email,{...notice,key,url:`${origin}/dashboard.html`});
-      for(const sub of subscriptions) addJob(id,key,'push',sub.endpoint,{...notice,key,url:'/dashboard.html'});
+      const expiresAt=Math.min(Number.isSafeInteger(notice.createdAt)?notice.createdAt:now(),now())+pushLifetimeMs;
+      if(expiresAt>now())for(const sub of subscriptions) addJob(id,key,'push',sub.endpoint,{...notice,key,url:'/dashboard.html',expiresAt});
     }
+    trimPendingPush(id);
   }
   function status(id) {
     const prefs=preferences(id);
@@ -166,8 +185,17 @@ export function createDelivery(db, databasePath, options={}) {
   }
   function subscribe(id,subscription) {
     const clean=validateSubscription(subscription);
-    db.prepare("UPDATE notification_outbox SET status='cancelled' WHERE target=? AND channel='push' AND status='pending'").run(clean.endpoint);
-    db.prepare('INSERT INTO push_subscriptions VALUES (?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,subscription=excluded.subscription').run(clean.endpoint,id,JSON.stringify(clean));
+    db.exec('SAVEPOINT push_subscription_change');
+    try {
+      const owner=db.prepare('SELECT user_id FROM push_subscriptions WHERE endpoint=?').get(clean.endpoint);
+      if(owner?.user_id!==id && db.prepare('SELECT COUNT(*) count FROM push_subscriptions WHERE user_id=?').get(id).count>=maximumPushSubscriptions)throw new Error('Background alerts are limited to 10 devices per account. Disable alerts on another device before adding one.');
+      db.prepare("UPDATE notification_outbox SET status='cancelled' WHERE target=? AND channel='push' AND status='pending'").run(clean.endpoint);
+      db.prepare('INSERT INTO push_subscriptions VALUES (?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,subscription=excluded.subscription').run(clean.endpoint,id,JSON.stringify(clean));
+      db.exec('RELEASE push_subscription_change');
+    } catch(error) {
+      db.exec('ROLLBACK TO push_subscription_change; RELEASE push_subscription_change');
+      throw error;
+    }
   }
   function unsubscribe(id,endpoint) {
     db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(id,endpoint);
@@ -186,9 +214,12 @@ export function createDelivery(db, databasePath, options={}) {
       for(const job of db.prepare("SELECT id,user_id,notice_key,payload FROM notification_outbox WHERE channel='password-reset' AND status='pending'").all()) {
         if(!db.prepare('SELECT token FROM password_resets WHERE token=? AND user_id=? AND expires>?').get(job.notice_key.slice('password-reset:'.length),job.user_id,now())) scrubPasswordResetJob(job,true);
       }
-      const jobs=db.prepare("SELECT * FROM notification_outbox WHERE status='pending' AND next_at<=? ORDER BY id LIMIT 10").all(now());
-      for(const job of jobs) {
+      // Re-select after every send so a new confirmation/reset need only wait
+      // for the current provider request, rather than an entire push batch.
+      for(let processed=0;processed<10;processed++) {
         if(stopped)break;
+        const job=db.prepare("SELECT * FROM notification_outbox WHERE status='pending' AND next_at<=? AND (channel='push' OR ?) ORDER BY CASE WHEN channel IN ('verify','password-reset','security','password-changed') THEN 0 ELSE 1 END,id LIMIT 1").get(now(),emailAvailable?1:0);
+        if(!job)break;
         // A previous send can yield while another request cancels this batch.
         if(db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(job.id)?.status!=='pending')continue;
         // A resend, successful confirmation, or expired token must never deliver an obsolete link.
@@ -198,9 +229,15 @@ export function createDelivery(db, databasePath, options={}) {
         const payload=JSON.parse(job.payload);
         const sub=job.channel==='push'?db.prepare('SELECT subscription FROM push_subscriptions WHERE endpoint=? AND user_id=?').get(job.target,job.user_id):null;
         if(job.channel==='push'&&!sub || job.channel==='email'&&!preferences(job.user_id).email_enabled) {db.prepare("UPDATE notification_outbox SET status='cancelled' WHERE id=?").run(job.id);continue;}
+        let subscription;
+        if(job.channel==='push') {
+          if(!Number.isSafeInteger(payload.expiresAt)||payload.expiresAt<=now()) {db.prepare("UPDATE notification_outbox SET status='cancelled',payload='{}' WHERE id=?").run(job.id);continue;}
+          try {subscription=validateSubscription(JSON.parse(sub.subscription));if(subscription.endpoint!==job.target)throw new Error('Subscription changed.');}
+          catch {unsubscribe(job.user_id,job.target);continue;}
+        }
         db.prepare("UPDATE notification_outbox SET status='sending' WHERE id=?").run(job.id);
         try {
-          if(sub) await sendPush(JSON.parse(sub.subscription),payload); else await sendEmail(job,payload);
+          if(subscription) await sendPush(subscription,payload); else await sendEmail(job,payload);
           if(stopped)break;
           db.prepare("UPDATE notification_outbox SET status='sent',attempts=attempts+1 WHERE id=? AND status='sending'").run(job.id);
           if(job.channel==='verify')scrubVerificationJob(job);
@@ -212,6 +249,7 @@ export function createDelivery(db, databasePath, options={}) {
           const attempts=job.attempts+1;
           const failed=permanent||attempts>=5;
           db.prepare("UPDATE notification_outbox SET status=?,attempts=?,next_at=? WHERE id=? AND status='sending'").run(failed?'failed':'pending',attempts,now()+Math.min(3600000,30000*2**attempts),job.id);
+          if(job.channel==='push'&&!failed)trimPendingPush(job.user_id);
           if(job.channel==='verify'&&failed)scrubVerificationJob(job);
           if(job.channel==='password-reset'&&failed)scrubPasswordResetJob(job);
           // Log status only; provider errors may otherwise contain credentials or subscription URLs.

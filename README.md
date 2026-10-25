@@ -387,6 +387,9 @@ Configuration:
 - `DATABASE_PATH`: optional absolute path to the SQLite database.
 - `APP_ORIGIN`: public origin, such as `https://academy.example.com`.
 - `COOKIE_SECURE=true`: secure cookies; enable with HTTPS for deployment.
+- `TRUST_PROXY_HOPS`: default `0` (ignore forwarded client addresses). Behind a
+  trusted reverse proxy, set its verified hop count so unrelated visitors do not
+  share a proxy's IP rate limit. See `DEPLOYMENT.md` before enabling this setting.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
 single-server development backend. Account controls, MetaApi performance reads,
@@ -395,6 +398,14 @@ implemented. A finalized retention policy, offsite disaster-recovery storage, re
 provider configuration, and payment execution still need operator setup or an
 additional integration. Manual payment records do not send funds.
 Formal program terms and legal/privacy information must be finalized before launch.
+
+The HTTP server applies frame restrictions and a no-referrer policy to all
+responses. Authenticated agreement documents permit same-origin framing for the
+document viewer. HTTPS installations send HSTS without applying it to subdomains.
+Push alerts are limited to ten devices and 100 pending jobs per member; routine
+pushes expire after five minutes. Confirmation, password-recovery, and account
+security emails take priority over routine notifications. Browser notification
+history and the trading journal remain available independently of push delivery.
 
 API endpoints: POST `/api/register`, `/api/login`, `/api/logout`, `/api/trades`,
 `/api/trades/close`, `/api/account/reset`; GET `/api/me`, `/api/account`, `/api/journal`.

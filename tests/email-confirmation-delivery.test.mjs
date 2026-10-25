@@ -121,7 +121,8 @@ test('resending during an in-flight send never resurrects its cancelled job or o
     release();await flushing;
     assert.equal(fixture.jobs()[0].status,'cancelled');
     assert.equal(fixture.jobs()[0].payload.includes(oldToken),false);
-    assert.equal(fixture.jobs()[1].status,'pending');
+    // Newly queued authentication mail is prioritized during the same flush.
+    assert.equal(fixture.jobs()[1].status,'sent');
     assert.throws(()=>fixture.delivery.verify(oldToken),/expired/);
   } finally {release();await fixture.close();}
 });
