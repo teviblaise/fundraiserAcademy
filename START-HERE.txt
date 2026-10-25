@@ -32,6 +32,10 @@ in-page popup notifications work without provider credentials.
 
 See README.md for features and DEPLOYMENT.md for later live hosting.
 
+Use Search in the site header to find academy guidance, assessment rules,
+profit-sharing information, and account tools. Private records are not searched.
+Search works without an API key or an external search provider.
+
 After passing the assessment, open Trader agreement. Signing is compulsory
 before sponsorship review. The supplied revised progressive profit-sharing and
 tier-retention section is included and published on startup. Read the current

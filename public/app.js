@@ -9,6 +9,18 @@ navigation?.querySelectorAll('a').forEach(link => link.addEventListener('click',
   toggle?.setAttribute('aria-expanded', 'false');
   navigation.classList.remove('open');
 }));
+// Search results can open the exact FAQ answer instead of a collapsed list.
+const faqList = document.querySelector('.faqs');
+if (faqList) {
+  const openLinkedAnswer = () => {
+    let id;
+    try { id = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
+    const answer = document.getElementById(id);
+    if (answer?.tagName === 'DETAILS' && faqList.contains(answer)) answer.open = true;
+  };
+  window.addEventListener('hashchange', openLinkedAnswer);
+  openLinkedAnswer();
+}
 async function authRequest(endpoint, data) {
   const response = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'FundraiserAcademy' }, body: JSON.stringify(data) });
   const result = await response.json().catch(() => ({}));

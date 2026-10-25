@@ -407,6 +407,15 @@ pushes expire after five minutes. Confirmation, password-recovery, and account
 security emails take priority over routine notifications. Browser notification
 history and the trading journal remain available independently of push delivery.
 
+The built-in site search at `/search.html` finds public academy guidance and page
+shortcuts, with category filters and search-as-you-type results. Its curated index
+contains public summaries only. Member shortcuts keep their normal login and
+permission requirements; private profiles, financial records, support transcripts,
+and signed documents are not indexed. Search queries stay in the browser's memory
+and are not sent to a search provider, stored in browser storage, or written to the
+URL. No API key or extra search service is required. Update the public index in
+`public/site-search-index.js` when company guidance changes.
+
 API endpoints: POST `/api/register`, `/api/login`, `/api/logout`, `/api/trades`,
 `/api/trades/close`, `/api/account/reset`; GET `/api/me`, `/api/account`, `/api/journal`.
 Mutations require JSON and `X-Requested-With: FundraiserAcademy`. All trading endpoints

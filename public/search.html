@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Find Fundraiser Academy pages, assessment rules, profit-sharing information, account tools, and help.">
+  <meta name="theme-color" content="#0b0b0b"><title>Search | Fundraiser Academy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script><script type="module" src="/site-search.js"></script>
+</head>
+<body>
+  <header class="header wrap">
+    <a href="/" class="brand" aria-label="Fundraiser Academy home"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="navigation">Menu <span aria-hidden="true">☰</span></button>
+    <nav id="navigation" aria-label="Main navigation"><a href="/">Home</a><a href="/program.html">Our model</a><a href="/faq.html">FAQs</a><a href="/search.html" aria-current="page">Search</a><a href="/client.html">Client dashboard</a></nav>
+  </header>
+  <main class="wrap pb-16">
+    <section class="max-w-4xl pt-8 pb-8 md:pt-14 md:pb-10" aria-labelledby="search-heading">
+      <p class="eyebrow mb-5">FUNDRAISER ACADEMY SEARCH</p>
+      <h1 id="search-heading" class="mb-5">Find your <em>next step.</em></h1>
+      <p class="max-w-2xl text-base text-muted">Search academy information, help topics, and shortcuts to your account tools.</p>
+    </section>
+    <section aria-label="Search the academy" class="mb-8 rounded-2xl border border-line bg-[#151515] p-5 sm:p-7">
+      <form id="site-search-form" role="search">
+        <label for="site-search-query" class="mb-3 block text-sm font-semibold">What are you looking for?</label>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+          <div class="relative min-w-0 flex-1">
+            <svg class="pointer-events-none absolute left-4 top-4 size-5 text-muted" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.75" cy="10.75" r="6.75"/><path d="m16 16 4.5 4.5"/></svg>
+            <input id="site-search-query" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" maxlength="160" class="mb-0 h-full min-h-13 pl-12 pr-4 text-base" placeholder="Try “drawdown” or “profit sharing”" aria-describedby="site-search-hint" disabled>
+          </div>
+          <div class="flex gap-3 sm:shrink-0"><button id="site-search-submit" class="button min-h-13 flex-1 justify-center sm:w-auto sm:flex-none" type="submit" disabled>Search</button><button id="site-search-clear" class="desk-action min-h-13 px-5" type="button" disabled>Clear</button></div>
+        </div>
+        <p id="site-search-hint" class="mt-4 text-xs text-muted">Your private account records are not searched. Account tools still require sign-in.</p>
+      </form>
+      <div class="mt-6 border-t border-line pt-5">
+        <p id="site-search-category-label" class="mb-3 text-xs font-semibold text-muted">Browse by topic</p>
+        <div id="site-search-categories" class="flex flex-wrap gap-2" role="group" aria-labelledby="site-search-category-label"></div>
+      </div>
+    </section>
+    <div class="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <section class="min-w-0" aria-labelledby="site-search-results-heading">
+        <div class="mb-5 border-b border-line pb-5"><h2 id="site-search-results-heading" class="mb-2 text-2xl tracking-tight">Popular starting points</h2><p id="site-search-summary" class="break-words text-sm text-muted" role="status" aria-live="polite" aria-atomic="true">Browse the links below while search loads.</p></div>
+        <ul id="site-search-results" class="space-y-4" aria-label="Search results"></ul>
+        <div id="site-search-empty" class="rounded-xl border border-line bg-[#151515] p-6 sm:p-8" hidden>
+          <h3 class="mb-3">No matching topics yet</h3><p class="mb-5 text-sm text-muted">Try a shorter phrase or choose a different category. These are useful places to start:</p>
+          <div class="flex flex-wrap gap-2"><button class="desk-action" type="button" data-search-suggestion="assessment rules">Assessment rules</button><button class="desk-action" type="button" data-search-suggestion="profit sharing">Profit sharing</button><button class="desk-action" type="button" data-search-suggestion="password">Password help</button></div>
+        </div>
+        <section id="site-search-fallback" class="rounded-xl border border-line p-6" aria-labelledby="site-search-browse-heading">
+          <h3 id="site-search-browse-heading" class="mb-4">Explore the academy</h3>
+          <ul class="space-y-3 text-sm"><li><a class="text-lime underline underline-offset-4" href="/program.html">How sponsorship works →</a></li><li><a class="text-lime underline underline-offset-4" href="/qualification.html">Assessment and qualification →</a></li><li><a class="text-lime underline underline-offset-4" href="/profit-sharing.html">Profit sharing and earned tiers →</a></li><li><a class="text-lime underline underline-offset-4" href="/faq.html">Frequently asked questions →</a></li><li><a class="text-lime underline underline-offset-4" href="/support.html">Customer support →</a></li></ul>
+          <noscript><p class="mt-5 text-sm text-muted">Search needs JavaScript. You can still visit <a href="/faq.html" class="text-lime underline">FAQs</a>, <a href="/qualification.html" class="text-lime underline">qualification</a>, and <a href="/support.html" class="text-lime underline">support</a>.</p></noscript>
+        </section>
+      </section>
+      <aside class="rounded-xl border border-line bg-[#151515] p-6" aria-labelledby="site-search-support-heading">
+        <p class="eyebrow mb-4 text-lime">A LITTLE GUIDANCE</p><h2 id="site-search-support-heading" class="mb-3 text-xl tracking-tight">Looking for a person?</h2><p class="mb-5 text-sm text-muted">Our support assistant can answer basic academy questions. Ask for an agent when you need human help.</p><a class="desk-action inline-block" href="/support.html">Open customer support →</a><p class="mt-4 text-xs text-muted">Human requests are queued for the academy team.</p>
+        <div class="mt-6 border-t border-line pt-5"><h3 class="mb-3 text-sm">Already a Fundraiser?</h3><p class="mb-4 text-sm text-muted">Open your dashboard to see your progress, certificates, and next steps.</p><a href="/client.html" class="text-sm font-semibold text-lime underline underline-offset-4">Go to your dashboard →</a></div>
+      </aside>
+    </div>
+  </main>
+  <footer class="wrap"><div class="footer-top"><a class="brand" href="/"><img class="brand-wordmark" src="/logo.svg" alt="Fundraiser Academy" width="710" height="170"></a><p>Your skill. Our backing.</p><div class="flex flex-wrap gap-5 text-xs"><a href="/faq.html">FAQs</a><a href="/profit-sharing.html">Profit sharing</a><a href="/support.html">Support</a><a href="/privacy.html">Privacy</a></div></div><p class="risk">Trading carries risk. Practice results, qualification, and signing an agreement do not guarantee sponsorship or payouts. The signed agreement and the selected prop firm's rules govern sponsored accounts.</p><div class="footer-bottom"><span>© <span id="year">2026</span> Fundraiser Academy</span><a href="#search-heading">Back to top ↑</a></div></footer>
+</body>
+</html>
