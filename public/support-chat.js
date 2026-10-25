@@ -1,12 +1,46 @@
+import { searchEntries } from './site-search-index.js';
+
+const publicTopics = new Map(searchEntries.map(topic => [topic.id, topic]));
+const describeTopic = id => publicTopics.get(id)?.description || '';
+// These destinations are fixed academy pages, never model-generated links.
+const GUIDE_LINKS = Object.freeze({
+  'academy-model': '/program.html', 'profit-sharing': '/profit-sharing.html',
+  'tier-retention': '/profit-sharing.html', 'payout-processing': '/profit-sharing.html',
+  'challenge-rules': '/qualification.html', registration: '/contact.html',
+  certificates: '/certificates.html', agreement: '/contract.html',
+  'password-recovery': '/forgot-password.html', 'two-factor': '/security.html',
+  'personal-data-export': '/account-tools.html', 'performance-reports': '/performance.html',
+  notifications: '/dashboard.html', 'forex-prices': '/dashboard.html',
+  'lot-size': '/dashboard.html', 'site-search': '/search.html',
+});
+const REFERENCE_LINKS = Object.freeze([
+  ['Published profit-sharing terms', '/profit-sharing.html'],
+  ['Your required agreement', '/contract.html'],
+  ['Search academy guidance', '/search.html'],
+]);
+function guideTopic(id, question, extra = '') {
+  const topic = publicTopics.get(id);
+  if (!topic || !GUIDE_LINKS[id]) return null;
+  return { question, answer: [topic.description, extra].filter(Boolean).join(' '), href: GUIDE_LINKS[id], requiresLogin: topic.requiresLogin };
+}
 const GUIDE_ANSWERS = [
-  ['How does Fundraiser Academy work?', 'We call our traders Fundraisers. We help people who can already trade but need capital to scale. Approved Fundraisers may receive a company-sponsored account from an approved third-party prop firm, subject to its rules and authorizations. The company bears agreed evaluation costs and ordinary permitted trading losses under the written agreement.'],
-  ['Why is Fundraiser added to my name?', 'Your Academy display title is your registered first name followed by Fundraiser. Your registered names, legal signature, and certificate-name choice are managed separately. Public leaderboard participation uses your chosen public alias.'],
-  ['How does profit sharing progress?', 'Newly admitted Fundraisers start at 50% to the Fundraiser and 50% to the company. Cumulative qualifying net payouts actually received and cleared by the company across eligible sponsored accounts advance the next eligible payout to 60% at $10,000 and 70% at $25,000. The payout that reaches a threshold uses the earlier tier. Earned tiers stay in place during a continuous contractual relationship.'],
-  ['When are payouts processed?', 'The company must initiate the Fundraiser’s payment within three business days after receiving cleared prop-firm funds. The processing calendar is Monday–Friday in Africa/Lagos. A payout request or approval is separate from external payment initiation and completion.'],
-  ['What are the assessment rules?', 'The demo assessment starts at $10,000. Passing requires 10% realized profit, no open positions, and at least three distinct UTC trading days. The total drawdown limit is 10% of the initial balance; the daily drawdown limit is 5% of UTC day-start equity.'],
-  ['How do I confirm my email?', 'Use an email address you can access when registering. Open the confirmation link sent to that address, then refresh your client dashboard. Check spam and use “Resend confirmation email” on your dashboard if needed. New users must confirm their email before trading.'],
-  ['What happens after passing?', 'A passing Fundraiser receives a certificate and can choose their registered name or nickname on it. Read and sign the company-provided agreement before sponsorship review. Passing the assessment and signing do not automatically approve funding.'],
-];
+  guideTopic('academy-model', 'How does Fundraiser Academy work?', 'The model has no participation fee. The company bears agreed evaluation costs and ordinary permitted trading losses under the written agreement; fraud and deliberate misconduct remain subject to law and the agreement’s express remedies. Your Academy display title uses your registered first name followed by Fundraiser.'),
+  guideTopic('profit-sharing', 'How does profit sharing progress?', 'The company shares are 50%, 40% and 30%, respectively. The payout that reaches a threshold uses the earlier tier; prior payouts are not recalculated. Qualifying receipts are after firm deductions and agreed transaction charges, before distribution, and aggregate across all eligible company-sponsored accounts. Your actual signed terms govern your account.'),
+  guideTopic('tier-retention', 'Can an earned tier be reduced or reset?', 'The standard maximum share is 70% unless both parties agree otherwise in writing. An earned-tier amendment during an active relationship requires both parties’ written agreement. Accrued unpaid entitlements remain payable after termination under the agreement; neither automatic retention nor an automatic reset is promised after a new agreement or reinstatement.'),
+  guideTopic('payout-processing', 'When are payouts processed?', 'Payment initiation is different from bank completion. A request or approval is not proof of payment, and this website records external activity rather than transferring money.'),
+  guideTopic('challenge-rules', 'What are the assessment rules?', 'Daily and total risk include open-position profit or loss. Three trading days is a minimum, not a three-day deadline or a 72-hour timer.'),
+  guideTopic('registration', 'How do registration and email confirmation work?', 'Check spam and the spelling of your registered address. A confirmation link works once and expires after 30 minutes; request another from your client dashboard after the cooldown. Support cannot confirm delivery or verify your email for you.'),
+  guideTopic('certificates', 'What happens after passing?', 'A certificate does not approve funding. Read and sign the actual company-provided agreement before sponsorship review; passing and signing do not automatically provide a funded account.'),
+  guideTopic('agreement', 'Which agreement applies, and can accounts be shared?', 'Your actual signed agreement and recorded account terms govern existing financial entitlements. Read the active agreement assigned to you when a new signature is required. Publishing terms or answering in chat never creates your signature. All sponsorship arrangements remain subject to the prop firm’s rules and required authorizations; the agreement does not permit prohibited account control, sharing, trading or payout arrangements.'),
+  guideTopic('password-recovery', 'What if I forget my password?', 'Use the latest link and keep passwords and recovery links out of chat. Password recovery does not remove two-factor authentication.'),
+  guideTopic('two-factor', 'How do I protect my account and manage sessions?', describeTopic('sessions') + ' Password recovery keeps 2FA enabled. If both your authenticator and recovery codes are lost, ask for a manual account review; support cannot bypass security.'),
+  guideTopic('personal-data-export', 'Can I export my data or close my account?', describeTopic('account-closure') + ' Account closure is separate from contractual termination. Ask an agent about unresolved payment or contractual obligations.'),
+  guideTopic('performance-reports', 'Where can I view performance and MetaTrader results?', describeTopic('metatrader-performance')),
+  guideTopic('notifications', 'How do trade alerts and background notifications work?', 'Background push is limited to ten devices per account. Old routine push alerts can expire after five minutes; review your saved trading history for past activity. Security and confirmation emails take priority over routine notifications, but delivery still depends on the configured service and your inbox.'),
+  guideTopic('forex-prices', 'Why are forex prices or demo fills paused?', 'Read the current message on the order ticket. Support cannot invent a replacement price or promise a provider update time.'),
+  guideTopic('lot-size', 'How are demo trade sizes measured?', 'Stops and take-profit levels use fresh triggering reference prices, which may differ from the requested level. A demo order does not trade real money.'),
+  { question: 'Where can I find a page or more academy help?', answer: 'Use the built-in site search for public academy information, assessment rules, profit-sharing guidance and account-tool shortcuts. Private account records are excluded, and search queries stay in your browser. For personal account decisions, request an agent.', href: GUIDE_LINKS['site-search'], requiresLogin: false },
+].filter(Boolean);
 
 function element(tag, className, content) {
   const node = document.createElement(tag);
@@ -43,7 +77,8 @@ export function initSupportChat(launcher) {
       <button type="button" class="desk-action shrink-0" data-support-close aria-label="Close customer support">Close</button>
     </header>
     <div class="min-h-0 overflow-y-auto px-5 pt-4 pb-5" data-support-body>
-      <p class="mb-3 text-xs text-muted">Ask about the company, registration, assessments, or certificates. For account-specific help, request an agent.</p>
+      <p class="mb-3 text-xs text-muted">Ask about academy terms, profit sharing, assessments, account tools or security. For personal decisions or a dispute, request an agent.</p>
+      <section class="mb-4 rounded-lg border border-line p-3" aria-label="Agreement and help references"><p class="metric-label">Read the source</p><div class="flex flex-wrap gap-2" data-support-reference-links></div><p class="mt-3 text-[10px] text-muted">Your actual signed agreement governs your account. Chat guidance cannot change it.</p></section>
       <div class="mb-4" data-support-guide><p class="metric-label">Academy guide · published information</p><div class="space-y-2" data-support-faq></div></div>
       <div class="mb-4 rounded-lg border border-line bg-[#151515] p-4" data-support-signin hidden><p class="mb-3 text-sm">Sign in to save a conversation and request a human agent. You can ask for support before confirming your email.</p><div class="flex flex-wrap gap-2"><a class="desk-action" href="/login.html">Sign in</a><a class="desk-action" href="/contact.html">Create account</a></div></div>
       <div class="mb-4" data-support-history-wrap hidden><label class="metric-label" for="support-conversations">Your conversations</label><select id="support-conversations" class="mb-0 text-xs" data-support-history><option value="">Current conversation</option></select><button type="button" class="desk-action mt-2" data-support-more-history hidden>Load more conversations</button></div>
@@ -95,10 +130,18 @@ export function initSupportChat(launcher) {
   let historyLoading = false;
   let historyItems = new Map();
 
-  for (const [question, answer] of GUIDE_ANSWERS) {
+  for (const [label, href] of REFERENCE_LINKS) {
+    const link = element('a', 'text-xs font-semibold text-lime underline underline-offset-4', label);
+    link.href = href;
+    find('[data-support-reference-links]').append(link);
+  }
+  for (const { question, answer, href, requiresLogin } of GUIDE_ANSWERS) {
     const detail = element('details', 'rounded-lg border border-line px-3 py-2 text-xs');
     const summary = element('summary', 'cursor-pointer font-semibold text-white', question);
     detail.append(summary, element('p', 'mt-2 text-muted', answer));
+    const link = element('a', 'mt-3 inline-block font-semibold text-lime underline underline-offset-4', requiresLogin ? 'Open this section · sign-in required →' : 'Read more →');
+    link.href = href;
+    detail.append(link);
     find('[data-support-faq]').append(detail);
   }
 

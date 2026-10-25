@@ -742,10 +742,29 @@ individual sponsorship or payment decisions are referred to staff.
 Set `SUPPORT_AI_API_KEY` in secure server settings for generative OpenAI replies.
 `SUPPORT_AI_MODEL` defaults to `gpt-4.1-mini`. The key stays on the server; only
 bounded chat history and the academy knowledge guide are sent to the provider,
-with response storage disabled. Profile, trading, certificate, and agreement
-records are not attached. Without a working AI key, answers come from the local
+with response storage disabled. The guide includes the exact ten-clause
+company-provided shared agreement section with its version and SHA-256, plus the
+curated public help index and confirmed website rules. Private profiles, trading
+records, certificates, personalized agreements, and signature records are not
+attached. Without a working AI key, answers come from the local
 **Academy guide** and are labeled accordingly. Support has no trading, funding,
 account-editing, or legal-signing tools.
+
+Contractual terms, payout obligations, disputes and private-account decisions use
+verified guide answers even when a generative provider is configured. A chat claim
+cannot change an earned tier, prove a receipt or replace the member's actual signed
+agreement. Numbered clause questions quote the bundled shared section; later
+company versions and individually signed terms must be checked in the member's
+authenticated agreement workflow. Updating support knowledge never publishes,
+changes, signs or reactivates a contract.
+
+Maintain `support-knowledge.mjs`, `support-guide.mjs`, and the public help index
+when approved company information changes. Do not load uploaded documents,
+`CONTRACT_FILE`, account exports or support transcripts into the shared knowledge
+base. Unknown contact details, policies, eligibility and service availability stay
+unknown until approved company sources establish them. The source file remains
+outside `public/`; quick public answers and reference links do not expose private
+documents.
 
 “Talk to an agent” or a clear request to speak with a person places the conversation
 in the human queue and pauses automated replies. Messages and handoff history stay

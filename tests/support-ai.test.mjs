@@ -280,7 +280,9 @@ test('payout-processing answers distinguish the initiation obligation from payme
 test('provider grounding includes threshold-crossing examples and the permitted-loss limits', async () => {
   let grounding;
   const support = createSupportAI({ apiKey: 'private-support-key', fetchFn: async (_, options) => { grounding=JSON.parse(options.body).instructions; return response('Read your current agreement for the published tiers.'); } });
-  await support.reply({ messages: message('How do I calculate a tier-crossing payout?') });
+  // Financial questions now use canonical guidance without a provider request.
+  // A general company question still verifies the provider's full grounding.
+  await support.reply({ messages: message('How does Fundraiser Academy work?') });
   assert.match(grounding, /first qualifying receipt of \$10,000 therefore gives the trader \$5,000 at 50%/);
   assert.match(grounding, /At cumulative \$24,500, a further \$1,000 uses 60% and yields \$600/);
   assert.match(grounding, /NEXT payout uses 70%/);
