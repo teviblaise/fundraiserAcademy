@@ -33,28 +33,11 @@ test('performance filters distinguish demo and sponsored results, reject invalid
   assert.match(currencyAmount(12.34,'EUR'),/12[.,]34/);assert.match(currencyAmount(12,'bad'),/currency unavailable/);assert.match(currencyAmount(12),/currency unavailable/);assert.equal(currencyAmount(Infinity,'USD'),'Not recorded');
 });
 
-test('MetaApi connection page honors explicit unlinked state, sends only identifiers, and binds writes to the visible revision',async()=>{
-  const app=fixture({responses:{'/api/admin/connections':{accounts:[{id:accountId,userId:7,traderName:'<img onerror=steal()>',label:'Allocation A',firmName:'Test firm',connection:{linked:false,active:false,revision:0,status:'not_connected',latest:null}}],total:1,limit:25,offset:0,provider:{configured:false,automaticSync:false,synchronizing:0}}}});
-  await app.ui.connections(1);assert.match(textOf(app.content),/<img onerror=steal\(\)>/);assert.match(textOf(app.content),/Server token not configured/);assert.ok(app.find('Link MetaApi account'));assert.equal(app.find('Synchronize now'),undefined);
-  await app.find('Link MetaApi account').click();const action=app.actions[0];assert.ok(!action.fields.some(field=>/password|token|secret/i.test(field.name)));
-  await action.execute(new Map([['providerAccountId',' broker-account-id '],['historyFrom','2026-01-01'],['reason','Assign existing approved allocation']]));
-  assert.deepEqual(app.posts,[{endpoint:`/api/admin/connections/${accountId}/link`,data:{providerAccountId:'broker-account-id',historyFrom:'2026-01-01',expectedRevision:0,reason:'Assign existing approved allocation'}}]);
-});
-
-test('connection synchronization requires privileged confirmation and disconnected assignments offer reconnection rather than silent reassignment',async()=>{
-  const response=connection=>({accounts:[{id:accountId,userId:1,label:'A',connection}],total:1,limit:25,offset:0,provider:{configured:true}});
-  const app=fixture({responses:{'/api/admin/connections':response({linked:true,active:true,revision:2,status:'synchronized',latest:{equity:10500,currency:'USD'},lastSuccessAt:42})}});
-  await app.ui.connections(1);await app.find('Synchronize now').click();assert.equal(app.unlocks,1);assert.equal(app.reloads,1);assert.deepEqual(app.posts,[{endpoint:`/api/admin/connections/${accountId}/sync`,data:{}}]);
-  await app.find('Disconnect').click();await app.actions[0].execute(new Map([['reason','Company allocation closed']]));assert.equal(app.posts[1].data.revision,2);
-  const disconnected=fixture({responses:{'/api/admin/connections':response({linked:true,active:false,revision:3,status:'disconnected',providerAccountId:'original-account'})}});
-  await disconnected.ui.connections(1);assert.ok(disconnected.find('Reconnect existing account'));assert.equal(disconnected.find('Synchronize now'),undefined);
-  await disconnected.find('Reconnect existing account').click();assert.equal(disconnected.actions[0].fields[0].value,'original-account');
-});
-
-test('connection views expose no mutation buttons for read-only staff and discard retired requests',async()=>{
-  const responses={'/api/admin/connections':{accounts:[{id:accountId,connection:{linked:false,revision:0}}],total:1,provider:{configured:true}}};
-  const readOnly=fixture({responses,permissions:[]});await readOnly.ui.connections(1);assert.equal(readOnly.find('Link MetaApi account'),undefined);
-  const retired=fixture({responses,current:false});await retired.ui.connections(1);assert.equal(retired.content.children.length,0);
+test('administrative extensions offer recorded performance and operations without broker-assignment controls',()=>{
+  const app=fixture();
+  assert.deepEqual(Object.keys(app.ui).sort(),['operations','performance','privacy']);
+  assert.equal(app.calls.length,0);
+  assert.equal(app.posts.length,0);
 });
 
 test('operations separates local backup durability, safe error metadata, and isolated checks from actual live restore',async()=>{
@@ -133,8 +116,8 @@ test('incident resolution requires an auditable privileged action and preserves 
 test('advanced reports show actual recorded curves and native currency, with incomplete coverage distinguished from a full history',async()=>{
   const saved=globalThis.document;globalThis.document={createElementNS:(_,tag)=>new Element(tag)};
   try{
-    const app=fixture({query:{userId:'7',source:'sponsored',accountId,from:'2026-01-01'},responses:{'/api/admin/performance':{account:{id:accountId,label:'Real allocation',currency:'EUR'},summary:{netProfit:125,closedTradeCount:2,winRate:50,expectancy:62.5,profitFactor:2},coverage:{historyComplete:false,status:'partial',warnings:['Only synchronized records are available.'],closedFillUnit:'Closing executions; partial closes are separate fills.'},drawdown:{observedEquity:{maxAmount:40},realizedBalance:{maxAmount:20}},equityCurve:{kind:'observed_equity',points:[{time:10,equity:1000,balance:1000},{time:20,equity:1125,balance:1125}],totalPoints:2},balanceCurve:{kind:'observed_balance',points:[],totalPoints:0},monthly:[{month:'2026-01',netProfit:125,cashFlows:500,closedTradeCount:2,winRate:50}],consistency:{positiveDays:1,negativeDays:1,flatDays:0,bestDayShareOfPositiveProfitPercent:100,appliesQualificationRule:false}}}});
-    await app.ui.performance(1);assert.ok(app.calls[0].includes('source=sponsored'));assert.match(textOf(app.content),/EUR/);assert.match(textOf(app.content),/history is incomplete/);assert.match(textOf(app.content),/No recorded observations/);assert.match(textOf(app.content),/Closing fill win rate/);assert.equal(flatten(app.content).filter(item=>item.tag==='polyline').length,1);
+    const app=fixture({query:{userId:'7',source:'sponsored',accountId,from:'2026-01-01'},responses:{'/api/admin/performance':{account:{id:accountId,label:'Real allocation',currency:'EUR'},summary:{netProfit:125,closedTradeCount:2,winRate:50,expectancy:62.5,profitFactor:2},coverage:{historyComplete:false,status:'partial',warnings:['Only recorded results are available.'],closedFillUnit:'Closing executions; partial closes are separate fills.'},drawdown:{observedEquity:{maxAmount:40},realizedBalance:{maxAmount:20}},equityCurve:{kind:'observed_equity',points:[{time:10,equity:1000,balance:1000},{time:20,equity:1125,balance:1125}],totalPoints:2},balanceCurve:{kind:'observed_balance',points:[],totalPoints:0},monthly:[{month:'2026-01',netProfit:125,cashFlows:500,closedTradeCount:2,winRate:50}],consistency:{positiveDays:1,negativeDays:1,flatDays:0,bestDayShareOfPositiveProfitPercent:100,appliesQualificationRule:false}}}});
+    await app.ui.performance(1);assert.ok(app.calls[0].includes('source=sponsored'));assert.match(textOf(app.content),/EUR/);assert.match(textOf(app.content),/recorded history is incomplete/);assert.match(textOf(app.content),/No recorded observations/);assert.match(textOf(app.content),/Closing fill win rate/);assert.equal(flatten(app.content).filter(item=>item.tag==='polyline').length,1);
     const blank=fixture();await blank.ui.performance(1);assert.equal(blank.calls.length,0);assert.match(textOf(blank.content),/No example performance is shown/);
   }finally{globalThis.document=saved;}
 });

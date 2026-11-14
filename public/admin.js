@@ -25,7 +25,6 @@ const sections = [
   ['contracts', 'Agreements', 'contracts.read', 'Terms & signatures', 'Publish the actual academy agreement, inspect immutable versions, and review recorded signatures.'],
   ['reviews', 'Sponsorship reviews', 'reviews.read', 'From qualification to review', 'Review eligible signed fundraisers. An approved review records a company decision; it does not purchase or fund a prop account.'],
   ['accounts', 'Sponsored accounts', 'finance.read', 'External account records', 'Record company-sponsored accounts and their agreed terms. These are manual records of external activity.'],
-  ['connections', 'MetaTrader connections', 'finance.read', 'Verified provider observations', 'Assign an existing MetaApi account and synchronize its recorded balances and deals. Credentials stay on the server.'],
   ['payouts', 'Profits & payouts', 'finance.read', 'Cleared payouts & payment progress', 'Track cleared payout entitlements, retained tiers, and external payment initiation. Recording a payment does not send money.'],
   ['support', 'Customer support', 'support.manage', 'Your support queue', 'Review human handoff requests and continue the saved conversation in the support inbox.'],
   ['reports', 'Reports & exports', 'reports.export', 'Operational reporting', 'Download bounded, filtered reports. Trading valuations reflect saved reference snapshots, not a live sponsored-account feed.'],
@@ -398,7 +397,7 @@ async function renderSystem(epoch) {
 const profitSharing=createAdminProfitSharing({api,post,can,node,card,table,detailGrid,button,openAction,cents,percent,content,isCurrent:epoch=>epoch===requestEpoch});
 const renderers={overview:renderOverview,traders:renderTraders,assessments:epoch=>renderTraders(epoch,true),certificates:renderCertificates,contracts:renderContracts,reviews:renderReviews,accounts:renderAccounts,payouts:renderPayouts,support:renderSupport,reports:renderReports,staff:renderStaff,audit:renderAudit,system:renderSystem};
 Object.assign(renderers,createAdminExtensions({api,post,can,node,card,table,detailGrid,button,link,openAction,notify,content,
-  isCurrent:epoch=>epoch===requestEpoch,getQuery:()=>({...pageQuery}),setQuery:values=>{pageQuery={...values};},reload:()=>loadCurrent(),ensureUnlocked,date,money,cents,percent}));
+  isCurrent:epoch=>epoch===requestEpoch,getQuery:()=>({...pageQuery}),setQuery:values=>{pageQuery={...values};},reload:()=>loadCurrent(),date,money,cents,percent}));
 function navigate(next) {
   if(writing)return;
   const entry=sections.find(item=>item[0]===next);if(!entry||!can(entry[2]))return;

@@ -12,7 +12,7 @@ for (const group of [
   ['nickname', 'nicknames'], ['password', 'passwords'], ['2fa', 'authentication', 'authenticator', 'totp', 'mfa', 'twofactor'],
   ['close', 'closure', 'delete', 'deletion'], ['limit', 'limits'], ['notification', 'notifications'],
   ['alert', 'alerts'], ['forex', 'fx'], ['crypto', 'cryptocurrency'],
-  ['metatrader', 'mt4', 'mt5', 'metaapi'], ['register', 'registration', 'signup'],
+  ['register', 'registration', 'signup'],
   ['login', 'signin'], ['session', 'sessions'], ['device', 'devices'],
   ['name', 'names'], ['edit', 'change', 'update'], ['payment', 'payments', 'paid'],
   ['report', 'reports'], ['result', 'results'], ['day', 'days'], ['tier', 'tiers'],

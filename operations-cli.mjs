@@ -32,8 +32,7 @@ try{
    try{emailAvailable=Boolean(new URL(process.env.APP_ORIGIN||process.env.RENDER_EXTERNAL_URL).protocol==='https:'&&process.env.RESEND_API_KEY&&process.env.EMAIL_FROM);}catch{}
    health=createOperationalHealth(db,databasePath,{operations,observer:true,
     paymentProcessing:()=>summarizeProgressiveProcessing(db),
-    configuration:()=>({emailAvailable,forexConfigured:Boolean(process.env.TWELVE_DATA_API_KEY)}),
-    sponsored:{status:()=>({configured:Boolean(process.env.METAAPI_API_TOKEN),automaticSync:false,intervalSeconds:60})}});
+    configuration:()=>({emailAvailable,forexConfigured:Boolean(process.env.TWELVE_DATA_API_KEY)})});
   }
   const result=action==='health'?health.status():action==='diagnose'?await health.diagnose():action==='status'?operations.status():action==='backup'?await operations.backup():action==='verify'?await operations.checkRecovery(options['--backup']):await operations.restoreToDirectory(options['--backup'],{targetDirectory:options['--target'],confirmation:options['--confirmation']});
   console.log(JSON.stringify(result,null,2));

@@ -18,13 +18,13 @@ async function fixture(options={}){
     CREATE TABLE account_details(user_id INTEGER REFERENCES users(id),private_note TEXT);
     INSERT INTO account_details VALUES(1,'private-trading-record');
     CREATE TABLE notification_outbox(id INTEGER PRIMARY KEY,status TEXT,next_at INTEGER,target TEXT,payload TEXT);
-    CREATE TABLE sponsored_sync_links(account_id TEXT PRIMARY KEY,active INTEGER,linked_at INTEGER,last_success_at INTEGER,error_code TEXT);`);
-  let clock=Date.UTC(2026,9,22,12),op={enabled:true,automaticBackups:true,backupIntervalHours:24,offsiteConfigured:false,backups:[{id:randomUUID(),createdAt:clock-60000,verifiedAt:clock-30000,state:'verified'}],recentRuns:[{status:'completed'}],errors:{open:0}},provider={configured:true,automaticSync:true,intervalSeconds:60},config={emailAvailable:true,forexConfigured:true};
-  const settings={now:()=>clock,operations:{status:()=>op},sponsored:{status:()=>provider},configuration:()=>config,storageStats:()=>({blocks:1024*1024,bavail:512*1024,bsize:4096}),...options};
+`);
+  let clock=Date.UTC(2026,9,22,12),op={enabled:true,automaticBackups:true,backupIntervalHours:24,offsiteConfigured:false,backups:[{id:randomUUID(),createdAt:clock-60000,verifiedAt:clock-30000,state:'verified'}],recentRuns:[{status:'completed'}],errors:{open:0}},config={emailAvailable:true,forexConfigured:true};
+  const settings={now:()=>clock,operations:{status:()=>op},configuration:()=>config,storageStats:()=>({blocks:1024*1024,bavail:512*1024,bsize:4096}),...options};
   const instances=[];
   function create(extra={}){const health=createOperationalHealth(db,database,{...settings,...extra});instances.push(health);return health;}
   const health=create();
-  return{folder,database,db,health,create,op,provider,config,time:()=>clock,advance:value=>{clock+=value;},async script(code){const filename=path.join(folder,randomUUID()+'.mjs');await writeFile(filename,code,{mode:0o600});return filename;},async close(){for(const item of instances)await item.close();try{db.close();}catch{}await rm(folder,{recursive:true,force:true});}};
+  return{folder,database,db,health,create,op,config,time:()=>clock,advance:value=>{clock+=value;},async script(code){const filename=path.join(folder,randomUUID()+'.mjs');await writeFile(filename,code,{mode:0o600});return filename;},async close(){for(const item of instances)await item.close();try{db.close();}catch{}await rm(folder,{recursive:true,force:true});}};
 }
 const check=(status,id)=>status.checks.find(item=>item.id===id);
 
@@ -80,18 +80,6 @@ test('queue health counts overdue scheduled attempts honestly and never returns 
     insert.run('failed',app.time(),'secret-failed@example.com','private-delivery');
     insert.run('sent',app.time()-999999,'secret-sent@example.com','private-delivered');
     const report=app.health.status(),queue=check(report,'delivery-queue');assert.equal(queue.state,'warning');assert.match(queue.summary,/1 pending deliveries.*scheduled attempt; 1 deliveries have failed/);assert.doesNotMatch(JSON.stringify(report),/secret-recipient|secret-other|private-reset-token|private-queue|private-delivery/);
-  }finally{await app.close();}
-});
-
-test('active MetaApi links report missing configuration, first observations, stale data and errors without broker IDs',async()=>{
-  const app=await fixture();try{
-    app.db.prepare('INSERT INTO sponsored_sync_links VALUES(?,?,?,?,?)').run('private-provider-account-id',1,app.time()-1000,null,null);
-    assert.equal(check(app.health.status(),'metaapi').state,'warning');
-    app.provider.configured=false;assert.equal(check(app.health.status(),'metaapi').state,'critical');app.provider.configured=true;
-    app.advance(301000);assert.equal(check(app.health.status(),'metaapi').state,'critical');
-    app.db.prepare('UPDATE sponsored_sync_links SET last_success_at=?,error_code=?').run(app.time(),'private-provider-error');assert.equal(check(app.health.status(),'metaapi').state,'warning');
-    app.db.exec('UPDATE sponsored_sync_links SET error_code=NULL');assert.equal(check(app.health.status(),'metaapi').state,'ok');
-    app.provider.automaticSync=false;assert.equal(check(app.health.status(),'metaapi').state,'warning');assert.equal(check(app.create({observer:true}).status(),'metaapi').state,'ok');assert.doesNotMatch(JSON.stringify(app.health.status()),/private-provider-account-id|private-provider-error/);
   }finally{await app.close();}
 });
 

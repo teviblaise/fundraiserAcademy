@@ -152,7 +152,6 @@ volume, ensure the data directory is writable by container UID 1000.
 - `DATABASE_PATH`: a file on persistent storage, not a temporary build directory.
 - `RESEND_API_KEY` and `EMAIL_FROM`: required for signup confirmation, password recovery/security notices, and opted-in alert emails.
 - `ADMIN_OWNER_EMAILS`: exact registered email address(es) for initial owner access; every owner must also confirm email and enable authenticator 2FA.
-- `METAAPI_API_TOKEN`: optional for MetaTrader 4/5 synchronization; set a real token privately on the running server before linking an existing MetaApi account.
 - `BACKUP_DIRECTORY`: optional private persistent backup directory; defaults to `backups/` beside the database.
 - `BACKUP_INTERVAL_HOURS` and `BACKUP_RETENTION_COUNT`: default to 24 hours and seven retained encrypted artifacts.
 - `BACKUP_ENCRYPTION_KEY`: optional stable, directly injected 32-byte base64 encryption key; otherwise preserve the generated private `backup-key.json` separately.
@@ -255,45 +254,6 @@ or immutable in the application. The included scheduled local backup service doe
 not supply persistent disks, offsite storage, or a company retention policy;
 operators still need those and periodic staff-access reviews.
 
-## Connect existing MetaTrader accounts
-
-1. Confirm that the prop firm permits the intended MetaApi access arrangement.
-   Create the MetaTrader 4/5 connection in MetaApi and ensure that the existing
-   MetaApi account is deployed and synchronized there. The academy connector does
-   not provision/deploy it, request broker passwords, or send trade instructions.
-2. Add `METAAPI_API_TOKEN` as a private environment value on the actual Render
-   service, then redeploy. A Codex cloud binding does not update Render. Never
-   commit the value, enter it in a browser connection form, or paste it in chat.
-   The SDK uses HTTPS and WebSocket authentication; use the actual server-injected
-   token rather than assuming a proxy-placeholder binding will work in both.
-3. Permit outbound MetaApi HTTPS/WebSocket connections. The SDK discovers regional
-   endpoints using its provisioning service under `agiliumtrade.ai`, including
-   `mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai`, then connects to the
-   account's regional services. Keep unrelated destinations out of token bindings.
-4. Complete the academy trader's assessment, current agreement signature, and
-   approved review. Record the actual sponsored allocation and agreed profit terms
-   in the console, then use **MetaTrader connections** to assign the existing
-   MetaApi account ID and history start to that record. This ID is not an API key.
-   The default history start is the preceding 30 days; select the required period
-   deliberately because the ownership binding and start cannot be rewritten to
-   another external account or trader.
-5. Run a manual synchronization, then inspect currency, last success, history
-   coverage, deal results, and observed equity in the private performance report.
-   Compare them with the actual provider account before enabling normal use.
-
-Active links are checked approximately every 60 seconds while the server runs,
-subject to bounded jobs and provider limits. Sleeping services do not continuously
-sync. Missing credentials, timeouts, stale observations, and incomplete history
-remain visible. Provider tests with an injected mock do not validate a real token,
-provider subscription, firm permission, or live network connection.
-
-Broker currency stays native; deposits/withdrawals are not trading profit. MetaApi
-observations do not automatically post to the USD-cent financial ledger. Reconcile
-the actual external settlement and the signed sharing policy before staff enter a
-profit statement. Client payout requests reserve available recorded shares; staff
-approve/reject them and record external payment evidence. The application never
-contacts a bank or sends funds.
-
 ## Account controls and performance validation
 
 Clients access `/account-tools.html` from the client dashboard or Security.
@@ -326,7 +286,7 @@ new assessment rules.
 
 Sign in to `/admin.html` and open **Operations & recovery**. The health report
 combines local database/storage checks, backup freshness and failures, notification
-queue totals, email/forex configuration, active MetaApi synchronization, and open
+queue totals, email/forex configuration, and open
 server incidents. Metrics and the downloadable JSON report contain aggregate
 values, not recipient addresses, provider account IDs, filesystem paths, or keys.
 Use Refresh for a current observation. Keep detailed checks behind staff access;
@@ -336,7 +296,7 @@ public `/healthz` remains a minimal availability endpoint.
 performs bounded, read-only SQLite `quick_check` and foreign-key checks in a separate
 subprocess, plus a private-storage temporary write probe that is cleaned up afterward.
 Recent results are recorded. It does not repair records, send test messages,
-contact MetaApi or market providers, or replace the database.
+contact market providers, or replace the database.
 
 Treat each reported action as an operator task:
 
@@ -344,9 +304,6 @@ Treat each reported action as an operator task:
   settings and provider delivery logs. Confirm delivery using an inbox you control;
   configuration alone is not delivery evidence. Review failed messages before
   deciding whether to request new confirmations or password-reset links.
-- For stale MetaApi connections, check the server token, provider status, approved
-  assignment, and deployed account connection. Use the connection's existing sync
-  control after resolving its cause; local diagnostics do not call MetaApi.
 - For low or unavailable storage, inspect the hosting volume and permissions.
   Expand durable storage or follow retention policy; do not remove live SQLite,
   WAL, authentication keys, or the only usable backup to silence a warning.
@@ -451,8 +408,8 @@ starts with no users; migrating existing records requires a separate protected
 database/key backup and restore.
 
 Required signup confirmation, password recovery, optional alert verification,
-the admin console, account controls, payout requests, MetaApi performance reads,
-advanced reports, and encrypted local backup/recovery checks are implemented.
+the admin console, account controls, payout requests, advanced reports, and encrypted
+local backup/recovery checks are implemented.
 Complete privacy/retention policies, persistent/offsite storage, working provider
 credentials, and payment execution are separate operator requirements. Manual
 payment confirmations do not transfer funds; review README.md and

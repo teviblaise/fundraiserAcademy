@@ -143,8 +143,8 @@ Each user has a separate account. The challenge has a 10% realized-profit target
 UTC day-start equity. Passing requires no open positions and fills on at least 3 distinct UTC trading days. These practice outcomes
 do not approve funding. Email confirmation, notification opt-in verification,
 password recovery, authenticator security, admin reviews, account closure and
-personal-data export, client payout requests, MetaApi performance reads, advanced
-reports, and encrypted local backups with isolated recovery checks are implemented.
+personal-data export, client payout requests, advanced reports, and encrypted local
+backups with isolated recovery checks are implemented.
 Company privacy/retention rules, permitted provider configuration, durable/offsite
 storage, and actual payment execution remain operator requirements. Paper trades fill at verified market-reference prices without
 an added spread. Stale or unavailable quotes pause execution; this still does not
@@ -208,8 +208,8 @@ Payout requests and approvals reserve available recorded trader earnings;
 rejection releases the reservation. An approved payout can be marked paid only
 with an external payment reference. Staff still need to verify and carry out the
 external transaction and reconcile evidence. No prop-firm purchase, bank transfer,
-or independent evidence verification is supplied. Authorized MetaApi connections
-can import existing account performance separately from the settlement ledger.
+or independent evidence verification is supplied. Performance observations and
+recorded settlement statements remain separate from payment evidence.
 Clients see only their own review message and financial records. Internal notes
 and evidence references remain restricted to authorized staff.
 
@@ -235,46 +235,38 @@ sponsored allocation, pending payout, or unpaid earned share remains. Keep the
 client able to resolve those obligations and allow cancellation. Staff can finish
 a prior requested closure after blockers are cleared, using the audited console.
 The confirmation removes mutable operational personal data and the usable
-profile, revokes authentication, disconnects provider access, and returns a receipt.
+profile, revokes authentication, and returns a receipt.
 Immutable signed agreements, financial records, review/audit history, and older
 backups may remain as disclosed. Define a real retention policy and review retained
 records; do not advertise complete erasure or an invented statutory retention term.
 
-### MetaApi monitoring and reconciliation
+### Manual settlement reconciliation and performance
 
-Confirm the selected prop firm's rules permit MetaApi access. Configure the actual
-MetaApi token privately on the application server and keep broker credentials out
-of forms, support, Git, and chat. Link an existing deployed MetaTrader 4/5 account
-only to the academy allocation backed by a current approved review. Choose the
-history start deliberately; the default is the preceding 30 days. The connector
-reads account information and deal history, normally around once per minute while
-the server runs. It does not provision/deploy an account, trade, purchase accounts,
-or execute withdrawals/payments. Check missing-key, stale, and incomplete-history
-statuses before relying on displayed data.
-
-Reconcile native-currency deals, trading fees, and cash flows with the provider.
-Deposits and withdrawals are not profit; unexplained adjustments and history gaps
-must be reviewed. Provider equity does not automatically become available earnings
-in the USD-cent ledger. Post actual settlement statements using the signed share
-and sharing policy, then handle client payout requests against unreserved earned
-amounts. Idempotent request keys prevent duplicate holds after uncertain retries.
+Reconcile actual prop-firm settlements, trading fees, and cash flows using
+authorized statements. Deposits and withdrawals are not profit, and unexplained
+adjustments or gaps require review. Retained performance observations do not
+automatically become available earnings in the USD-cent ledger. Record cleared
+qualifying receipts or settlement statements under the actual signed sharing
+policy, then handle client payout requests against unreserved earned amounts.
+Idempotent request keys prevent duplicate holds after uncertain retries.
 Approve or reject requests, carry out approved payments through the chosen external
 channel, record references, and reconcile the status history. A recorded paid label
 is evidence entered by staff, not independent proof that the bank paid.
 
-Private performance reports show observed equity, separately labeled realized
-balance where reconciliation permits it, UTC monthly results, drawdown, and daily
-profit concentration. Historical equity is not manufactured. MetaTrader closing
-execution records can include partial closes, so fill win rate is not a round-trip
-position win rate; standalone fees can affect profit without belonging to a
-particular closing fill. Read coverage, currency, and staleness notes. Consistency
-analysis describes past records and does not create extra assessment rules.
+Private performance reports show recorded assessment valuations, UTC monthly
+results, drawdown, and daily profit concentration. Sponsored performance reports
+read historical account observations and deals already retained. Accounts without
+recorded history have empty or unavailable reports. Historical data is read-only
+and is not refreshed from an external trading platform. Financial statements stay
+in Account controls and finance screens; they do not manufacture equity or trade
+history. Read each report's source, coverage and currency notes. Consistency
+describes past records and creates no extra assessment rules.
 
 ### Operational monitoring and recovery
 
 Assign an operator to **Admin → Operations & recovery**. Refresh its health report
 to review database/storage availability, backup freshness, notification queue
-failures/overdue sends, email/forex configuration, and stale active MetaApi feeds.
+failures/overdue sends and email/forex configuration.
 Download the sanitized aggregate report when a review needs a portable record.
 Recipients, account IDs, paths, and secrets are excluded. A configured sender is
 not proof of inbox delivery, and free space is not proof of persistent or offsite
@@ -286,7 +278,7 @@ isolated subprocess and a temporary private-storage write probe. It records safe
 results without changing customer records, contacting providers, sending email,
 repairing data, or replacing the live database. For a failed check, preserve the
 installation and investigate the fixed failure code before planning recovery.
-Use the deployment runbook for delivery failures, stale connections, low storage,
+Use the deployment runbook for delivery failures, low storage,
 and failed/old backups. Do not ask customers to send credentials or copy private
 records into an incident reason.
 

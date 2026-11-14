@@ -24,6 +24,7 @@ test('provider grounding contains the exact shared agreement and every public he
     assert.ok(request.instructions.includes(providedAgreement.version));
     assert.ok(request.instructions.includes(providedAgreement.hash));
     for (const entry of searchEntries) assert.ok(request.instructions.includes(entry.title), entry.id);
+    assert.doesNotMatch(request.instructions, /\b(?:metaapi|metatrader|mt[45])\b/i);
     assert.match(request.instructions, /not a copy of any customer's signed agreement/);
     assert.match(request.instructions, /Deleting a website account is not itself contractual termination/);
     assert.match(request.instructions, /ten browser devices.*100 pending/);

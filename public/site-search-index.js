@@ -105,7 +105,7 @@ const entries = [
   },
   {
     id: 'performance-reports', title: 'Advanced performance reports',
-    description: 'Explore recorded equity curves, realized balance, monthly UTC results, drawdown and consistency analysis. Assessment and sponsored-account results stay separate; missing history is labeled.',
+    description: 'Explore assessment performance and any retained recorded account history, with available balance or equity observations, monthly UTC results, drawdown and consistency. Coverage is labeled; financial statements and payouts are in Account controls.',
     url: '/performance.html', category: 'Assessment',
     keywords: ['performance', 'report', 'equity curve', 'monthly results', 'statistics', 'consistency', 'win rate', 'profit factor', 'analysis', 'balance'], requiresLogin: true,
   },
@@ -138,12 +138,6 @@ const entries = [
     description: 'Request available recorded earned share, then follow the review and externally recorded payment history. Existing reservations reduce the available amount; the website does not itself transfer money.',
     url: '/account-tools.html#payout-heading', category: 'Sponsorship & payouts',
     keywords: ['payout', 'request', 'withdrawal', 'payment', 'history', 'earned share', 'available balance', 'approve'], requiresLogin: true,
-  },
-  {
-    id: 'metatrader-performance', title: 'MetaTrader 4/5 performance through MetaApi',
-    description: 'Staff can link an existing approved sponsored MetaTrader account through MetaApi for read-only performance synchronization. Ask support about connection problems; this website does not place trades on that broker account.',
-    url: '/performance.html', category: 'Sponsorship & payouts',
-    keywords: ['metatrader', 'mt4', 'mt5', 'metaapi', 'connection', 'synchronize', 'sync', 'broker', 'account id', 'api token'], requiresLogin: true,
   },
   {
     id: 'free-participation', title: 'Participation fees and sponsorship costs',

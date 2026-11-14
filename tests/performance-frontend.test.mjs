@@ -12,7 +12,7 @@ function report(){return{generatedAt:time,source:'assessment',account:{currency:
  drawdown:{observedEquity:{observations:2,maxAmount:75,maxPercent:0.75},cashFlowAdjustedEquity:{observations:2,maxAmount:75,maxPercent:0.75},realizedBalance:{observations:2,maxAmount:50,maxPercent:0.5},cashFlowAdjustment:'External flows are excluded.'},
  equityCurve:{kind:'observed_equity',points:[{time:time-1000,equity:10000,balance:10000},{time,equity:9925,balance:10050}],totalPoints:2,downsampled:false,description:'Recorded observations only.'},
  balanceCurve:{kind:'realized_balance',points:[{time:time-1000,balance:10100},{time,balance:10050}],totalPoints:2,downsampled:false,description:'Closed-fill balance, not marked equity.'},
- coverage:{status:'available',historyComplete:true,warnings:[],closedFillUnit:'Recorded closed assessment positions.',lastSuccessfulSyncAt:null,stale:false}};}
+ coverage:{status:'available',historyComplete:true,warnings:[],closedFillUnit:'Recorded closed assessment positions.'}};}
 
 test('currency display never assumes USD for unverified sponsored currency or invalid money',()=>{
  assert.match(performanceMoney(123.45,'USD'),/123\.45/);assert.match(performanceMoney(3.125,'USDT'),/3\.125 USDT/);
@@ -60,12 +60,12 @@ test('performance page renders real observed equity, distinct realized balance, 
  const request=page.calls.find(call=>call.endpoint.startsWith('/api/performance'));assert.equal(request.options.credentials,'same-origin');assert.equal(request.options.cache,'no-store');assert.equal(request.options.referrerPolicy,'no-referrer');assert.ok(request.options.signal instanceof AbortSignal);
 });
 
-test('missing sponsored connection displays coverage and empty curves without fabricated earnings or currency',async()=>{
- const payload=report();payload.source='sponsored';payload.account={id:accountId,label:'Awaiting connection',currency:null};payload.coverage={status:'not_connected',warnings:['Connect the assigned account first.']};payload.equityCurve.points=[];payload.equityCurve.totalPoints=0;payload.balanceCurve.points=[];payload.balanceCurve.totalPoints=0;payload.monthly=[];payload.daily=[];
- const page=fixture(endpoint=>endpoint.startsWith('/api/performance')?{status:200,body:payload}:null);await page.settle();assert.equal(page.nodes.get('performance-coverage-badge').textContent,'Awaiting account connection');assert.match(page.nodes.get('performance-report-range').textContent,/Currency not verified/);assert.match(page.nodes.get('performance-warnings').textContent,/Connect/);assert.equal(page.nodes.get('performance-equity-chart').descendants('svg').length,0);assert.doesNotMatch(page.nodes.get('performance-summary').textContent,/\$|50\.00/);
+test('missing sponsored records display coverage and empty curves without fabricated earnings or currency',async()=>{
+ const payload=report();payload.source='sponsored';payload.account={id:accountId,label:'Awaiting recorded performance',currency:null};payload.coverage={status:'unavailable',warnings:['No performance observations or statements have been recorded.']};payload.equityCurve.points=[];payload.equityCurve.totalPoints=0;payload.balanceCurve.points=[];payload.balanceCurve.totalPoints=0;payload.monthly=[];payload.daily=[];
+ const page=fixture(endpoint=>endpoint.startsWith('/api/performance')?{status:200,body:payload}:null);await page.settle();assert.equal(page.nodes.get('performance-coverage-badge').textContent,'History unavailable');assert.match(page.nodes.get('performance-report-range').textContent,/Currency not verified/);assert.match(page.nodes.get('performance-warnings').textContent,/No performance observations/);assert.equal(page.nodes.get('performance-equity-chart').descendants('svg').length,0);assert.doesNotMatch(page.nodes.get('performance-summary').textContent,/\$|50\.00/);
 });
 
-test('company labels, provider warnings and explanations stay text rather than executable markup',async()=>{
+test('company labels, coverage warnings and explanations stay text rather than executable markup',async()=>{
  const attack='<img src=x onerror=alert(1)>',payload=report();payload.account.label=attack;payload.coverage.warnings=[attack];payload.consistency.explanation=attack;
  const page=fixture(endpoint=>endpoint.startsWith('/api/performance')?{status:200,body:payload}:null);await page.settle();assert.equal(page.nodes.get('performance-report-title').textContent,attack);assert.match(page.nodes.get('performance-warnings').textContent,/<img/);assert.equal(page.nodes.get('performance-warnings').descendants('img').length,0);assert.equal(page.nodes.get('performance-consistency-note').textContent,attack);
 });

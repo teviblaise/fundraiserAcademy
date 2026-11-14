@@ -233,7 +233,6 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
     systemStatus(){
       const mail=delivery.status(0);
       const stream=marketData.streamStatus?.('BTCUSD');
-      const sponsored=platform.sponsored.status();
       return {generatedAt:now(),application:{mode:'single-server',database:'SQLite',nodeVersion:process.versions.node},
         security:{adminTwoFactorRequired:true,privilegeMinutes:5,sessionDays:7,idleHours:24,ownerConfigured:Boolean(adminOptions?.ownerEmails||process.env.ADMIN_OWNER_EMAILS)},
         integrations:[
@@ -241,7 +240,6 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
           {name:'Forex reference prices',configured:Boolean(process.env.TWELVE_DATA_API_KEY),status:process.env.TWELVE_DATA_API_KEY?'configured':'not_configured',description:'Twelve Data Basic periodic quotes. Provider availability is checked during execution.'},
           {name:'Crypto reference prices',configured:true,status:stream?.connected?'stream_connected':'REST_fallback',description:'Public Coinbase prices; source freshness still controls simulated fills.'},
           {name:'Generative support',configured:Boolean(process.env.SUPPORT_AI_API_KEY),status:process.env.SUPPORT_AI_API_KEY?'configured':'academy_guide',description:'Company guide remains available without AI credentials.'},
-          {name:'Sponsored MetaTrader performance',configured:sponsored.configured,status:sponsored.configured?'configured':'not_configured',description:'MetaApi reads linked existing accounts. Configuration does not confirm live synchronization; inspect Operations and MetaTrader connections.'},
           {name:'Payment execution',configured:false,status:'manual_records',description:'Staff reconcile statements and record externally executed payments. This application does not send money.'}],
         storage:{durability:'Keep the private database directory on persistent operator-managed storage.',backups:'Encrypted scheduled backups and isolated recovery checks are available in Operations. Preserve the separate backup encryption key and copy backups off this server.'},
         outbox:{pending:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status IN ('pending','sending')").get().n,failed:db.prepare("SELECT count(*) n FROM notification_outbox WHERE status='failed'").get().n}};
@@ -567,7 +565,7 @@ export function createBackend(databasePath, { marketData: injectedMarketData, de
       if(await platform.handle(req,res,pathname,current))return;
       user(req);
       if(pathname==='/api/admin'||pathname.startsWith('/api/admin/')){await adminConsole.handle(req,res,pathname,current);return;}
-      if(req.method==='GET'&&pathname==='/api/sponsorship'){respond(res,200,{...adminConsole.clientView(current.id),connections:platform.sponsored.clientView(current.id)});return;}
+      if(req.method==='GET'&&pathname==='/api/sponsorship'){respond(res,200,adminConsole.clientView(current.id));return;}
       if (pathname === '/api/security' || pathname.startsWith('/api/security/')) {
         requireOrigin(req);
         if (req.method === 'GET' && pathname === '/api/security') {

@@ -103,7 +103,7 @@ function consistency(daily, events) {
     appliesQualificationRule: false, explanation: 'Concentration statistics describe recorded results; they do not add or change academy qualification rules.' };
 }
 
-export function createPerformanceReports(db, { now = Date.now, sponsoredSync, maxSnapshotBuckets = 50000 } = {}) {
+export function createPerformanceReports(db, { now = Date.now, historicalRecords, maxSnapshotBuckets = 50000 } = {}) {
   if (typeof now !== 'function' || !Number.isSafeInteger(maxSnapshotBuckets) || maxSnapshotBuckets < 10 || maxSnapshotBuckets > 100000) throw new TypeError('Provide a report clock and a bounded snapshot retention count.');
   db.exec(`CREATE TABLE IF NOT EXISTS performance_assessment_snapshots (
     user_id INTEGER NOT NULL REFERENCES users(id), attempt TEXT NOT NULL, bucket_at INTEGER NOT NULL,
@@ -111,6 +111,27 @@ export function createPerformanceReports(db, { now = Date.now, sponsoredSync, ma
     PRIMARY KEY(user_id,attempt,bucket_at));
     CREATE INDEX IF NOT EXISTS performance_assessment_samples_time ON performance_assessment_snapshots(user_id,bucket_at DESC);`);
   const exists = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  // Compatibility reader for previously recorded account observations. These
+  // tables are never created, changed, or refreshed by the reporting service.
+  // External account identifiers and credential bindings are not selected.
+  function readHistoricalRecords(accountId) {
+    if (!exists('sponsored_sync_links')) return null;
+    const history = db.prepare('SELECT currency,history_from,history_through,history_complete,last_success_at FROM sponsored_sync_links WHERE account_id=?').get(accountId);
+    if (!history) return null;
+    const hasDeals = exists('sponsored_sync_deals'), hasMarks = exists('sponsored_sync_snapshots');
+    if (!hasDeals && !hasMarks) return null;
+    const deals = hasDeals ? db.prepare('SELECT id,time,currency,type,entry_type,classification,net_profit,cash_flow,is_closing FROM sponsored_sync_deals WHERE account_id=? ORDER BY time DESC,id DESC LIMIT ?').all(accountId, maxRows + 1) : [];
+    const snapshots = hasMarks ? db.prepare('SELECT at,currency,balance,equity FROM sponsored_sync_snapshots WHERE account_id=? ORDER BY at DESC LIMIT ?').all(accountId, maxRows + 1) : [];
+    return {
+      currency: history.currency,
+      history: { historyFrom: history.history_from, historyThrough: history.history_through, historyComplete: history.history_complete === 1 && hasDeals, observedAt: history.last_success_at },
+      deals: deals.slice(0, maxRows).reverse().map(record => ({ id: record.id, time: record.time, currency: record.currency, type: record.type, entryType: record.entry_type, classification: record.classification, netProfit: record.net_profit, cashFlow: record.cash_flow, isClosing: record.is_closing === 1 ? true : record.is_closing === 0 ? false : null })),
+      snapshots: snapshots.slice(0, maxRows).reverse(),
+      truncated: deals.length > maxRows || snapshots.length > maxRows,
+    };
+  }
+  const recordedHistory = historicalRecords ?? readHistoricalRecords;
+  if (typeof recordedHistory !== 'function') throw new TypeError('Provide a historical record reader.');
   function captureAssessment(userId, state, at = now()) {
     userId = validUserId(userId);
     if (!timestamp(at) || !object(state) || state.executionMode !== 'reference' || !finite(state.balance) || !finite(state.initial) || state.initial <= 0 || typeof state.notificationEpoch !== 'string' || !state.notificationEpoch || state.notificationEpoch.length > 100 || !Array.isArray(state.positions) || !Array.isArray(state.history)) return { captured: false, reason: 'invalid_or_legacy_assessment' };
@@ -160,8 +181,8 @@ export function createPerformanceReports(db, { now = Date.now, sponsoredSync, ma
     if (!exists('sponsored_accounts')) fail(404, 'Sponsored account not found.');
     const account = db.prepare('SELECT id,label,user_id FROM sponsored_accounts WHERE id=? AND user_id=?').get(accountId.toLowerCase(), userId);
     if (!account) fail(404, 'Sponsored account not found.');
-    const raw = sponsoredSync?.performanceData?.(account.id);
-    if (!object(raw)) return { account: { id: account.id, label: account.label, currency: null, attempt: null }, events: [], flows: [], snapshots: [], coverage: { status: 'not_connected', historyComplete: false, skippedRecords: 0, warnings: ['Connect and synchronize this MetaApi account before live performance is available.'] } };
+    const raw = recordedHistory(account.id);
+    if (!object(raw)) return { account: { id: account.id, label: account.label, currency: null, attempt: null }, events: [], flows: [], snapshots: [], coverage: { status: 'unavailable', historical: true, historyComplete: false, observedAt: null, skippedRecords: 0, warnings: ['No recorded trade history or equity observations are available for this account. Manual sponsorship and payout records do not establish a trading equity curve.'] } };
     const currency = typeof raw.currency === 'string' && /^[A-Z][A-Z0-9]{1,11}$/.test(raw.currency) ? raw.currency : null;
     const events = [], flows = [], snapshots = [], seen = new Set(); let skipped = 0, adjustments = 0, unknownClose = 0;
     const deals = Array.isArray(raw.deals) ? raw.deals : [], marks = Array.isArray(raw.snapshots) ? raw.snapshots : [];
@@ -180,20 +201,19 @@ export function createPerformanceReports(db, { now = Date.now, sponsoredSync, ma
       snapshots.push({ time: point.at, balance: point.balance, equity: point.equity });
     }
     events.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id)); flows.sort((a, b) => a.time - b.time); snapshots.sort((a, b) => a.time - b.time);
-    const connection = object(raw.connection) ? raw.connection : {}, warnings = [];
-    if (!currency) warnings.push('The provider account currency has not been verified. Amounts are not combined or converted.');
-    if (!connection.historyComplete) warnings.push('Provider deal-history coverage is incomplete; statistics cover synchronized records only.');
-    if (connection.stale) warnings.push('The last successful provider synchronization is stale.');
-    if (skipped) warnings.push('Invalid, duplicate or currency-mismatched provider records were omitted.');
-    if (adjustments) warnings.push('Provider adjustments with unknown trading classification are excluded from profit.');
+    const history = object(raw.history) ? raw.history : {}, warnings = ['Historical account records are read-only and do not receive automatic updates.'];
+    if (!currency) warnings.push('The recorded account currency has not been verified. Amounts are not combined or converted.');
+    if (!history.historyComplete) warnings.push('Recorded deal-history coverage is incomplete; statistics cover retained records only.');
+    if (skipped) warnings.push('Invalid, duplicate or currency-mismatched historical records were omitted.');
+    if (adjustments) warnings.push('Recorded adjustments with unknown trading classification are excluded from profit.');
     if (unknownClose) warnings.push('Some execution records lack a verified closing-entry type; those records do not enter fill-count and win-rate statistics.');
     if (!snapshots.length) warnings.push('No observed broker equity snapshots are available; no historical equity is invented.');
     const truncated = Boolean(raw.truncated) || deals.length > maxRows || marks.length > maxRows;
     return { account: { id: account.id, label: account.label, currency, attempt: null }, events, flows, snapshots,
-      coverage: { status: currency && connection.historyComplete && !skipped && !adjustments && !unknownClose && !truncated ? 'available' : 'partial', historyComplete: Boolean(connection.historyComplete) && !skipped && !adjustments && !unknownClose && !truncated,
-        historyFrom: timestamp(connection.historyFrom) ? connection.historyFrom : null, historyThrough: timestamp(connection.historyThrough) ? connection.historyThrough : null,
-        lastSuccessfulSyncAt: timestamp(connection.lastSuccessAt) ? connection.lastSuccessAt : null, stale: Boolean(connection.stale), skippedRecords: skipped, excludedAdjustments: adjustments, unclassifiedClosingEntries: unknownClose, historyTruncated: truncated, warnings,
-        provider: 'MetaApi', monetaryUnit: 'Native broker account currency; no exchange conversion.', snapshotSampling: 'Actual synchronized broker equity observations.' } };
+      coverage: { status: currency && history.historyComplete && !skipped && !adjustments && !unknownClose && !truncated ? 'available' : 'partial', historyComplete: Boolean(history.historyComplete) && !skipped && !adjustments && !unknownClose && !truncated,
+        historyFrom: timestamp(history.historyFrom) ? history.historyFrom : null, historyThrough: timestamp(history.historyThrough) ? history.historyThrough : null,
+        observedAt: timestamp(history.observedAt) ? history.observedAt : null, historical: true, skippedRecords: skipped, excludedAdjustments: adjustments, unclassifiedClosingEntries: unknownClose, historyTruncated: truncated, warnings,
+        source: 'Recorded account history', monetaryUnit: 'Recorded account currency; no exchange conversion.', snapshotSampling: 'Previously recorded account equity observations.' } };
   }
   function build(userId, query = {}) {
     userId = validUserId(userId);

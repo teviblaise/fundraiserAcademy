@@ -75,7 +75,7 @@ STAFF AND ADMINISTRATION
 
 The admin dashboard is /admin.html. It includes trader and assessment review,
 certificates, agreement publication, sponsorship decisions, sponsored-account
-and payout records, MetaTrader connections, performance analysis, account-closure
+and payout records, performance analysis, account-closure
 requests, backup/error operations, support, reports, staff roles, audit history,
 and system status.
 
@@ -133,33 +133,27 @@ receipt. Immutable agreements, financial records, review/audit history, and olde
 backup copies may remain as disclosed. This does not claim that every personal
 datum has been erased. Save the receipt and apply the company's retention policy.
 
-METATRADER CONNECTIONS AND PERFORMANCE
+PERFORMANCE REPORTS AND RECORDED SPONSORSHIP
 
-MetaTrader 4/5 synchronization uses MetaApi. Set METAAPI_API_TOKEN privately on
-the actual application server; on Render this is separate from Codex settings.
-Create/deploy the permitted connection in MetaApi, then link its existing account
-ID to the approved academy sponsored record in the admin console. Never enter a
-broker password or API key into that form or chat. The website reads performance;
-it does not provision accounts, trade, purchase accounts, or transfer money.
+Open /performance.html for recorded assessment results, monthly summaries,
+drawdown, and consistency. Sponsored performance reports use historical account
+observations and deals already retained. Accounts without recorded history have
+empty or unavailable reports. Financial statements remain in Account controls
+and the finance screens. Historical records remain read-only; there is no live
+trading-platform connection.
 
-Choose the history start deliberately (default: the previous 30 days). The server
-checks active links roughly every 60 seconds while running. Missing credentials,
-stale observations, and partial history are shown rather than replaced with demo
-results. Broker currency remains native, and deposits are not trading profit.
-Staff must reconcile actual settlements before posting profit statements or
-payout earnings to the separate financial ledger.
-
-Open /performance.html for observed equity, realized balance, monthly results,
-drawdown, and consistency. Marked equity starts when actual observations exist;
-the site does not invent older equity. Read history/currency/fee coverage notes.
-MetaTrader closing fills may include partial closes, so their win rate is not a
-round-trip-position win rate. Consistency statistics add no new challenge rules.
+Equity is shown only where actual observations exist. The site does not invent
+older equity or turn statement earnings into broker balance history. Read the
+source, currency, and coverage notes. Staff must reconcile actual settlements
+before posting financial statements or cleared payout receipts. Consistency
+statistics add no new challenge rules. Payments are handled externally and
+recorded separately from performance observations.
 
 OPERATIONAL HEALTH, BACKUPS AND RECOVERY CHECKS
 
 Open Admin > Operations & recovery to check current database/storage health,
-backup freshness, delivery failures, email/forex setup, stale active MetaApi feeds,
-and safe runtime/storage metrics. Refresh the view or download its sanitized
+backup freshness, delivery failures, email/forex setup, and safe runtime/storage
+metrics. Refresh the view or download its sanitized
 aggregate report. The report excludes customer records, provider account IDs,
 filesystem paths, and secret values.
 

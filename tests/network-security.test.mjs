@@ -108,7 +108,7 @@ test('actual server protects public pages, private API errors, missing files, ma
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     const base = `http://127.0.0.1:${port}`;
-    for (const [endpoint, status] of [['/', 200], ['/dashboard.html', 200], ['/certificates.html', 200], ['/contract.html', 200], ['/reset-password.html', 200], ['/healthz', 200], ['/api/admin/connections', 401], ['/.env', 404], ['/%ZZ', 404]]) {
+    for (const [endpoint, status] of [['/', 200], ['/dashboard.html', 200], ['/certificates.html', 200], ['/contract.html', 200], ['/reset-password.html', 200], ['/healthz', 200], ['/api/admin/overview', 401], ['/.env', 404], ['/%ZZ', 404]]) {
       const response = await fetch(base + endpoint, { headers: { 'X-Forwarded-Proto': 'http', Host: 'attacker.invalid' } });
       assert.equal(response.status, status, endpoint);
       assert.equal(response.headers.get('x-frame-options'), 'DENY', endpoint);

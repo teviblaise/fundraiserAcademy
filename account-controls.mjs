@@ -95,6 +95,8 @@ function eraseMutable(db, userId, requestedAt) {
     db.prepare('UPDATE support_conversations SET assigned_agent_id=NULL,status=CASE WHEN status=\'assigned\' THEN \'waiting\' ELSE status END WHERE assigned_agent_id=?').run(userId);
     if(exists(db,'support_audit'))db.prepare('DELETE FROM support_audit WHERE actor_user_id=?').run(userId);
   }
+  // Earlier installations may retain account history. This compatibility
+  // cleanup neither creates a connection nor performs any external request.
   if(exists(db,'sponsored_sync_links'))db.prepare('UPDATE sponsored_sync_links SET active=0,provider_account_id=NULL,revision=revision+1 WHERE account_id IN (SELECT id FROM sponsored_accounts WHERE user_id=?)').run(userId);
   for(const table of ['sponsored_sync_deal_versions','sponsored_sync_deals','sponsored_sync_snapshots'])if(exists(db,table))db.prepare(`DELETE FROM ${table} WHERE account_id IN (SELECT id FROM sponsored_accounts WHERE user_id=?)`).run(userId);
   for (const table of ['account_tool_privileges','admin_step_up','sessions','two_factor_recovery_codes','two_factor_challenges','two_factor','password_resets','email_verifications','push_subscriptions','notification_outbox','notification_preferences','leaderboard_profiles','support_roles','admin_roles','performance_assessment_snapshots','accounts','events','sponsorship_reviews']) {

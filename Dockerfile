@@ -1,7 +1,6 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY vendor ./vendor
 RUN npm ci --include=dev
 COPY public ./public
 COPY src ./src
@@ -11,9 +10,8 @@ FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production PORT=3000 DATABASE_PATH=/app/data/academy.sqlite
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY vendor ./vendor
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --chown=node:node server.mjs network-security.mjs backend.mjs password-recovery.mjs passwords.mjs two-factor.mjs sessions.mjs delivery.mjs certificates.mjs contracts.mjs agreement.mjs market-data.mjs live-quotes.mjs support.mjs support-ai.mjs support-knowledge.mjs support-guide.mjs support-admin.mjs leaderboard.mjs admin.mjs admin-access.mjs admin-cli.mjs admin-data.mjs admin-workflows.mjs admin-finance.mjs progressive-finance.mjs account-controls.mjs account-platform.mjs sponsored-sync.mjs performance-reports.mjs operations.mjs operational-health.mjs operations-cli.mjs ./
+COPY --chown=node:node server.mjs network-security.mjs backend.mjs password-recovery.mjs passwords.mjs two-factor.mjs sessions.mjs delivery.mjs certificates.mjs contracts.mjs agreement.mjs market-data.mjs live-quotes.mjs support.mjs support-ai.mjs support-knowledge.mjs support-guide.mjs support-admin.mjs leaderboard.mjs admin.mjs admin-access.mjs admin-cli.mjs admin-data.mjs admin-workflows.mjs admin-finance.mjs progressive-finance.mjs account-controls.mjs account-platform.mjs performance-reports.mjs operations.mjs operational-health.mjs operations-cli.mjs ./
 COPY --chown=node:node agreements ./agreements
 COPY --from=build --chown=node:node /app/public ./public
 RUN mkdir -p /app/data && chown node:node /app/data

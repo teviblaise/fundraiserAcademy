@@ -1,6 +1,5 @@
 import {createHash} from 'node:crypto';
 import {createAccountControls} from './account-controls.mjs';
-import {createSponsoredSync} from './sponsored-sync.mjs';
 import {createPerformanceReports} from './performance-reports.mjs';
 import {createOperations} from './operations.mjs';
 import {createOperationalHealth} from './operational-health.mjs';
@@ -19,10 +18,9 @@ const userId=value=>{
 export function createAccountPlatform(db,databasePath,{admin,access,sessions,twoFactor,user,sessionHash,reauthenticate,
   body,respond,requireOrigin,limit,revokeAccount,closeRevokedStreams,configuration,now=Date.now,options={}}){
   const controls=createAccountControls(db,{access,now});
-  const sponsored=createSponsoredSync(db,{access,workflows:admin.workflows,now,...options.sponsored});
-  const reports=createPerformanceReports(db,{now,sponsoredSync:sponsored});
+  const reports=createPerformanceReports(db,{now});
   const operations=createOperations(db,databasePath,{now,autoStart:false,deletionLedger:()=>controls.exportDeletionLedger(),...options.operations});
-  const health=createOperationalHealth(db,databasePath,{now,operations,sponsored,configuration,paymentProcessing:()=>admin.finance.processingSummary(),...options.health});
+  const health=createOperationalHealth(db,databasePath,{now,operations,configuration,paymentProcessing:()=>admin.finance.processingSummary(),...options.health});
   db.exec(`CREATE TABLE IF NOT EXISTS account_tool_privileges (
     token TEXT NOT NULL REFERENCES sessions(token) ON DELETE CASCADE,
     purpose TEXT NOT NULL CHECK(purpose IN ('export','delete','payout')),
@@ -38,24 +36,20 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
   const clientPaths=new Set(['/api/account/status','/api/account/authorize','/api/account/export','/api/account/delete','/api/account/delete/cancel','/api/payouts','/api/payouts/request','/api/performance','/api/sponsored-accounts']);
   async function handle(req,res,pathname,current){
     const adminPath=pathname.startsWith('/api/admin/');
-    const connection=/^\/api\/admin\/connections\/([a-f0-9-]{36})\/(link|unlink|sync)$/.exec(pathname);
     const completion=/^\/api\/admin\/privacy\/([1-9]\d*)\/complete$/.exec(pathname);
     const resolution=/^\/api\/admin\/errors\/([a-f0-9]{64})\/resolve$/.exec(pathname);
-    const adminKnown=['/api/admin/connections','/api/admin/performance','/api/admin/operations','/api/admin/errors','/api/admin/operations/backup','/api/admin/operations/check','/api/admin/operations/diagnose','/api/admin/privacy'].includes(pathname)||connection||completion||resolution;
+    const adminKnown=['/api/admin/performance','/api/admin/operations','/api/admin/errors','/api/admin/operations/backup','/api/admin/operations/check','/api/admin/operations/diagnose','/api/admin/privacy'].includes(pathname)||completion||resolution;
     if(!clientPaths.has(pathname)&&!adminKnown)return false;
     requireOrigin(req);const id=current.id;
     const query=Object.fromEntries(new URL(req.url,'http://localhost').searchParams);
     limit(req,`account-platform:${id}`,240,60000);
     if(adminPath){
       access.require(id,'overview.read');
-      const permission=pathname.startsWith('/api/admin/connections')?'finance.read':pathname==='/api/admin/performance'?'reports.export':pathname.startsWith('/api/admin/privacy')?'traders.manage':'system.read';
+      const permission=pathname==='/api/admin/performance'?'reports.export':pathname.startsWith('/api/admin/privacy')?'traders.manage':'system.read';
       access.require(id,permission);
       if(req.method==='GET'){
         let result;
-        if(pathname==='/api/admin/connections'){
-          const page=admin.finance.accounts(query);
-          result={...page,accounts:page.accounts.map(account=>({...account,connection:sponsored.readAccount(account.id)})),provider:sponsored.status()};
-        }else if(pathname==='/api/admin/performance'){const {userId:target,...filters}=query;result=reports.admin(userId(target),filters);}
+        if(pathname==='/api/admin/performance'){const {userId:target,...filters}=query;result=reports.admin(userId(target),filters);}
         else if(pathname==='/api/admin/operations')result={...operations.status(),health:health.status()};
         else if(pathname==='/api/admin/errors')result=operations.errors(query);
         else if(pathname==='/api/admin/privacy')result=controls.requests(query);
@@ -63,16 +57,11 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
         user(req);access.require(id,permission);respond(res,200,result);return true;
       }
       if(req.method!=='POST')throw failure(405,'Use GET or POST.');
-      const writePermission=connection?'finance.write':completion?'traders.manage':'system.read';
+      const writePermission=completion?'traders.manage':'system.read';
       admin.privileged(req,id,writePermission);
       const input=await body(req);admin.privileged(req,id,writePermission);
       let result;
-      if(connection){
-        const target=connection[1],action=connection[2];
-        if(action==='link')result=sponsored.linkAccount(id,target,input);
-        else if(action==='unlink')result=sponsored.unlinkAccount(id,target,input);
-        else result=await sponsored.syncAccount(id,target,{guard:()=>admin.privileged(req,id,'finance.write')});
-      }else if(completion){
+      if(completion){
         const target=userId(completion[1]);const explanation=reason(input.reason);
         if(target===id)throw failure(409,'Use your personal account controls to request your own account deletion.');
         db.exec('BEGIN IMMEDIATE');
@@ -107,7 +96,7 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
       if(pathname==='/api/account/status')result={...controls.status(id),twoFactorEnabled:twoFactor.snapshot(id).enabled};
       else if(pathname==='/api/payouts')result=admin.finance.clientView(id);
       else if(pathname==='/api/performance')result=reports.client(id,query);
-      else if(pathname==='/api/sponsored-accounts')result={funding:admin.finance.clientView(id),connections:sponsored.clientView(id)};
+      else if(pathname==='/api/sponsored-accounts')result={funding:admin.finance.clientView(id)};
       else throw failure(405,'Use POST for this account action.');
       user(req);respond(res,200,result);return true;
     }
@@ -135,9 +124,9 @@ export function createAccountPlatform(db,databasePath,{admin,access,sessions,two
     else throw failure(405,'Use GET for this resource.');
     respond(res,200,result);return true;
   }
-  return {handle,controls,sponsored,reports,operations,health,
-    start(){sponsored.start();operations.start();},
-    async close(){await Promise.allSettled([sponsored.close(),operations.close(),health.close()]);},
+  return {handle,controls,reports,operations,health,
+    start(){operations.start();},
+    async close(){await Promise.allSettled([operations.close(),health.close()]);},
     capture(error,metadata){try{return operations.capture(error,metadata);}catch{return null;}}
   };
 }

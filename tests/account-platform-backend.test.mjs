@@ -21,8 +21,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;})
 async function fixture(options={}){
  const folder=await mkdtemp(path.join(tmpdir(),'fa-platform-http-')),database=path.join(folder,'academy.sqlite');
  let time=Date.now();const references=options.marketData??createReferenceFixture({now:()=>time});
- const provider=options.provider??{async fetch(_id,query){return{accountInformation:{currency:'EUR',balance:11097,equity:11110},deals:[{id:'closing-fill',type:'DEAL_TYPE_BUY',entryType:'DEAL_ENTRY_OUT',profit:100,commission:-2,swap:-1,fee:0,time:query.to-1000},{id:'capital-deposit',type:'DEAL_TYPE_BALANCE',profit:1000,time:query.to-500}],complete:true,nextOffset:query.offset+2};},async close(){}};
- const backend=createBackend(database,{now:()=>time,autoTick:false,adminOptions:{ownerEmails:'owner@example.com'},marketData:references,deliveryOptions:{...testDeliveryOptions,now:()=>time},supportOptions:{staffEmails:'',aiOptions:{apiKey:''}},platformOptions:{sponsored:{provider,syncTimeoutMs:10000},operations:{autoStart:false,backupDirectory:path.join(folder,'backups')},health:options.health}});
+ const backend=createBackend(database,{now:()=>time,autoTick:false,adminOptions:{ownerEmails:'owner@example.com'},marketData:references,deliveryOptions:{...testDeliveryOptions,now:()=>time},supportOptions:{staffEmails:'',aiOptions:{apiKey:''}},platformOptions:{operations:{autoStart:false,backupDirectory:path.join(folder,'backups')},health:options.health}});
  const server=http.createServer((req,res)=>backend.handle(req,res,new URL(req.url,'http://localhost').pathname));
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
  const app={folder,database,origin,backend,references,time:()=>time,advance(ms){time+=ms;},
@@ -113,23 +112,20 @@ test('performance HTTP reports capture actual assessment samples and never allow
  }finally{await app.close();}
 });
 
-test('MetaApi assignment and read-only sync preserve native currency, hide provider IDs from clients and do not credit payout earnings',async()=>{
+test('retired account-connection endpoints are unavailable while manual account records and performance permissions remain intact',async()=>{
  const app=await fixture();try{
-  const owner=await app.register('owner@example.com',{factor:true}),trader=await app.register('trader@example.com'),other=await app.register('other@example.com');const account=await app.sponsor(owner,trader);
-  const linked=await app.request(`/api/admin/connections/${account.id}/link`,{providerAccountId:'metaapi-isolated-account-123',historyFrom:'2026-10-01',reason,expectedRevision:0},owner.cookie);assert.equal(linked.status,200,JSON.stringify(linked.body));assert.equal(linked.body.status,'awaiting_sync');
-  const synced=await app.request(`/api/admin/connections/${account.id}/sync`,{},owner.cookie);assert.equal(synced.status,200,JSON.stringify(synced.body));assert.equal(synced.body.currency,'EUR');assert.equal(synced.body.dealCount,2);assert.equal(synced.body.controlsTrades,false);assert.equal(synced.body.transfersMoney,false);
-  const client=await app.request('/api/sponsored-accounts',undefined,trader.cookie);assert.equal(client.status,200);assert.equal(client.body.connections.accounts[0].currency,'EUR');assert.doesNotMatch(JSON.stringify(client.body),/metaapi-isolated-account-123|providerAccountId|apiToken/);assert.equal(client.body.funding.accounts[0].availableCents,0);
-  const report=await app.request(`/api/performance?source=sponsored&accountId=${account.id}`,undefined,trader.cookie);assert.equal(report.status,200,JSON.stringify(report.body));assert.equal(report.body.account.currency,'EUR');assert.equal(report.body.summary.netProfit,97);assert.equal(report.body.summary.cashFlows,1000);assert.equal(report.body.summary.closedTradeCount,1);assert.equal(report.body.equityCurve.points.length,1);assert.equal((await app.request(`/api/performance?source=sponsored&accountId=${account.id}`,undefined,other.cookie)).status,404);assert.equal((await app.request('/api/admin/connections',undefined,trader.cookie)).status,403);
-  const administrative=await app.request(`/api/admin/performance?userId=${trader.id}&source=sponsored&accountId=${account.id}`,undefined,owner.cookie);assert.equal(administrative.status,200);assert.equal(administrative.body.summary.netProfit,97);
+  const owner=await app.register('owner@example.com',{factor:true}),trader=await app.register('trader@example.com'),other=await app.register('other@example.com');
+  const account=await app.sponsor(owner,trader);
+  assert.equal((await app.request('/api/admin/connections',undefined,owner.cookie)).status,404);
+  for(const action of ['link','unlink','sync'])assert.equal((await app.request(`/api/admin/connections/${account.id}/${action}`,{},owner.cookie)).status,404);
+  const client=await app.request('/api/sponsored-accounts',undefined,trader.cookie);
+  assert.equal(client.status,200);assert.equal(client.body.funding.accounts[0].id,account.id);assert.equal('connections' in client.body,false);
+  const report=await app.request(`/api/performance?source=sponsored&accountId=${account.id}`,undefined,trader.cookie);
+  assert.equal(report.status,200);assert.equal(report.body.coverage.status,'unavailable');assert.equal(report.body.equityCurve.points.length,0);assert.equal(report.body.summary.closedTradeCount,0);
+  assert.equal((await app.request(`/api/performance?source=sponsored&accountId=${account.id}`,undefined,other.cookie)).status,404);
+  const administrative=await app.request(`/api/admin/performance?userId=${trader.id}&source=sponsored&accountId=${account.id}`,undefined,owner.cookie);assert.equal(administrative.status,200);
+  app.inspect(db=>assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name LIKE 'sponsored_sync_%'").get().n,0));
  }finally{await app.close();}
-});
-
-test('a MetaApi response cannot commit observations after the operator authorization expires while awaiting the provider',async()=>{
- const began=deferred(),release=deferred();const app=await fixture({provider:{async fetch(_id,query){began.resolve();await release.promise;return{accountInformation:{currency:'USD',balance:10000,equity:10001},deals:[],complete:true,nextOffset:query.offset};},async close(){release.resolve();}}});
- try{
-  const owner=await app.register('owner@example.com',{factor:true}),trader=await app.register('trader@example.com');const account=await app.sponsor(owner,trader);assert.equal((await app.request(`/api/admin/connections/${account.id}/link`,{providerAccountId:'metaapi-isolated-await-123',historyFrom:'2026-10-01',reason},owner.cookie)).status,200);
-  const syncing=app.request(`/api/admin/connections/${account.id}/sync`,{},owner.cookie);await began.promise;app.advance(300001);release.resolve();const result=await syncing;assert.equal(result.status,403);assert.equal(result.body.code,'ADMIN_REAUTH_REQUIRED');app.inspect(db=>{assert.equal(db.prepare('SELECT count(*) n FROM sponsored_sync_snapshots').get().n,0);assert.equal(db.prepare('SELECT count(*) n FROM sponsored_sync_deals').get().n,0);});
- }finally{release.resolve();await app.close();}
 });
 
 test('operational backup/recovery routes require owner authorization, verify isolated restore copies and preserve production sessions',async()=>{

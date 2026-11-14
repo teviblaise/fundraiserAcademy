@@ -52,7 +52,7 @@ if(!isMainThread&&workerData?.task==='academy-operational-inspection'){
 }
 
 /** Private, aggregate readiness checks. No provider request or user-data repair is performed. */
-export function createOperationalHealth(db,databasePath,{now=Date.now,operations,sponsored,configuration=()=>({emailAvailable:false,forexConfigured:false}),paymentProcessing,observer=false,diagnosticTimeoutMs=10000,storageStats=statfsSync,diagnosticScript=fileURLToPath(import.meta.url),diagnosticWorkerScript=fileURLToPath(import.meta.url)}={}){
+export function createOperationalHealth(db,databasePath,{now=Date.now,operations,configuration=()=>({emailAvailable:false,forexConfigured:false}),paymentProcessing,observer=false,diagnosticTimeoutMs=10000,storageStats=statfsSync,diagnosticScript=fileURLToPath(import.meta.url),diagnosticWorkerScript=fileURLToPath(import.meta.url)}={}){
   if(typeof now!=='function'||!operations?.status||typeof configuration!=='function'||typeof storageStats!=='function'||!Number.isSafeInteger(diagnosticTimeoutMs)||diagnosticTimeoutMs<10||diagnosticTimeoutMs>30000||[diagnosticScript,diagnosticWorkerScript].some(script=>typeof script!=='string'||!path.isAbsolute(script)))throw new TypeError('Provide operational status services, local diagnostic scripts, and a timeout of 10–30000 milliseconds.');
   const source=path.resolve(databasePath),directory=path.dirname(source);
   db.exec(`CREATE TABLE IF NOT EXISTS operations_diagnostic_runs (
@@ -115,7 +115,6 @@ export function createOperationalHealth(db,databasePath,{now=Date.now,operations
     let config={};try{config=configuration()||{};}catch{}
     add('email','Transactional email',config.emailAvailable===true?'ok':'warning',config.emailAvailable===true?'Email credentials, sender, and public origin are configured; delivery was not probed.':'Email configuration is incomplete for signup confirmation and password recovery.',config.emailAvailable===true?'Verify real delivery with your email provider when changing configuration.':'Configure the public HTTPS origin, Resend key, and verified sender on the running server.');
     add('forex','Forex reference prices',config.forexConfigured===true?'ok':'warning',config.forexConfigured===true?'The forex reference provider is configured; its availability was not probed.':'The forex reference provider is not configured.',config.forexConfigured===true?'Review live quote freshness if traders report unavailable prices.':'Configure the Twelve Data key on the running server.');
-    let provider={};try{provider=sponsored?.status?.()||{};}catch{}
     if(available){
       try{
         const table=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='notification_outbox'").get();
@@ -125,17 +124,7 @@ export function createOperationalHealth(db,databasePath,{now=Date.now,operations
           add('delivery-queue','Notification delivery queue',failed||overdue?'warning':'ok',`${overdue} pending deliveries are over five minutes past their scheduled attempt; ${failed} deliveries have failed.`,failed||overdue?'Review email/push provider status. Users should request fresh authentication links; do not resend expired tokens.':'No action needed.');
         }else add('delivery-queue','Notification delivery queue','disabled','No notification delivery queue is available in this installation.','Initialize the full application before checking delivery health.');
       }catch{add('delivery-queue','Notification delivery queue','warning','Delivery totals could not be queried.','Inspect application schema and database health.');}
-      try{
-        const table=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sponsored_sync_links'").get();
-        const threshold=Math.max(300000,(number(provider.intervalSeconds)||60)*3000);
-        const links=table?db.prepare("SELECT count(*) linked,sum(CASE WHEN error_code IS NOT NULL THEN 1 ELSE 0 END) failed,sum(CASE WHEN coalesce(last_success_at,linked_at)<? THEN 1 ELSE 0 END) stale,sum(CASE WHEN last_success_at IS NULL THEN 1 ELSE 0 END) awaiting FROM sponsored_sync_links WHERE active=1").get(checkedAt-threshold):{};
-        const linked=integer(links.linked),failed=integer(links.failed),stale=integer(links.stale),awaiting=integer(links.awaiting);
-        if(!linked)add('metaapi','Sponsored-account synchronization','disabled','No active MetaApi connections are linked.','Link approved existing prop accounts when ready to synchronize.');
-        else if(provider.configured!==true)add('metaapi','Sponsored-account synchronization','critical',`${linked} active connections have no configured MetaApi provider.`,'Configure the actual MetaApi token on the running server.');
-        else if(stale||failed||awaiting)add('metaapi','Sponsored-account synchronization',stale===linked?'critical':'warning',`${stale} connections are stale, ${failed} have recorded errors, and ${awaiting} await their first successful observation.`,'Review MetaTrader connection status and provider availability; no provider request was made by this check.');
-        else if(!observer&&provider.automaticSync!==true)add('metaapi','Sponsored-account synchronization','warning',`${linked} active connections have current observations, but automatic synchronization is not running.`,'Inspect the running synchronization scheduler.');
-        else add('metaapi','Sponsored-account synchronization','ok',`${linked} active connections have recent successful observations and no recorded errors.`);
-      }catch{add('metaapi','Sponsored-account synchronization','warning','Sponsored-account synchronization totals are unavailable.','Inspect application schema and database health.');}
+
     }
     if(typeof paymentProcessing==='function'){
       try{

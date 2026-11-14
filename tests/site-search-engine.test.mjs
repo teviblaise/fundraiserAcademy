@@ -34,7 +34,7 @@ test('common help questions find their most relevant destinations', () => {
     ['How long do payouts take?', 'payout-processing'],
     ['equity curve', 'performance-reports'],
     ['payout request', 'payout-requests'],
-    ['MetaApi', 'metatrader-performance'],
+    ['monthly results', 'performance-reports'],
     ['first name', 'profile-name'],
     ['change my name', 'profile-name'],
     ['customer support agent', 'support'],
@@ -46,13 +46,18 @@ test('common help questions find their most relevant destinations', () => {
 });
 
 test('case, accents, common aliases, partial words and modest typing errors are supported', () => {
-  assert.equal(searchSite('MÉTAAPI').results[0]?.id, 'metatrader-performance');
+  assert.equal(searchSite('CÉRTIFICATES').results[0]?.id, 'certificates');
   assert.equal(searchSite('certficate').results[0]?.id, 'certificates');
   assert.equal(searchSite('certifciate').results[0]?.id, 'certificates');
   assert.equal(searchSite('cert').results[0]?.id, 'certificates');
   assert.equal(searchSite('withdrawal request').results[0]?.id, 'payout-requests');
   assert.equal(searchSite('TOTP').results[0]?.id, 'two-factor');
   assert.ok(searchSite('25k profit').results.some(entry => entry.id === 'profit-sharing'));
+});
+
+test('removed account-connection services are absent from public search', () => {
+  assert.doesNotMatch(JSON.stringify(searchEntries), /\b(?:metaapi|metatrader|mt[45])\b/i);
+  for (const query of ['MetaApi', 'Meta API', 'MetaTrader', 'MT4', 'MT5']) assert.equal(searchSite(query).total, 0, query);
 });
 
 test('filters, deterministic popular results and pagination limits preserve truthful counts', () => {
@@ -94,5 +99,5 @@ test('search results cannot mutate the shared index and source uses no network o
   const source = await readFile(new URL('../public/site-search-engine.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /fetch\s*\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|document\.cookie|sendBeacon/);
   const index = JSON.stringify(searchEntries);
-  assert.doesNotMatch(index, /@|onrender\.com|RESEND_API_KEY|METAAPI_API_TOKEN|recipientUserId|contentBase64/);
+  assert.doesNotMatch(index, /@|onrender\.com|RESEND_API_KEY|recipientUserId|contentBase64/);
 });

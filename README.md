@@ -63,7 +63,7 @@ log in at `login.html`. Each user has a separate practice account. Registration 
 
 The staff console at `/admin.html` includes an overview, searchable traders and
 assessment records, certificates, company agreement publication, sponsorship
-reviews, sponsored-account records, MetaTrader connections, profit statements,
+reviews, sponsored-account records, profit statements,
 payout records, performance analysis, account-closure requests, backup/error
 operations, support, bounded CSV reports, staff permissions, audit history, and system
 configuration status. The client dashboard shows the trader's own review message and recorded
@@ -126,7 +126,7 @@ are **records of external activity**. Approved traders who sign the supplied
 A qualifying receipt is an eligible prop-firm payout actually received and cleared
 by the company, attributable to the trader, after the firm's deductions and agreed
 third-party transaction charges, before the trader/company split. It is recorded
-in USD cents with reconciliation evidence and a cleared-funds date. MetaApi
+in USD cents with reconciliation evidence and a cleared-funds date. Performance
 observations, paper results, unrealized profits, and unsettled statements do not
 credit earnings or advance a tier.
 
@@ -195,8 +195,8 @@ are not presented as a complete export. Browser collection is limited to 50 MB.
 
 Deletion requires typing `DELETE MY ACCOUNT`. Completed closure removes mutable
 operational personal data, replaces the usable profile with a non-login tombstone,
-revokes sessions and authentication material, disconnects the MetaApi link, and
-removes mutable trading, support, notification, and performance observations. The
+revokes sessions and authentication material, and removes mutable trading,
+support, notification, and performance observations. The
 receipt lists restricted immutable agreements, financial records, review history,
 and administrative records retained for operator retention review. Earlier backup
 copies may remain until backup rotation removes them. This is account closure and
@@ -216,35 +216,6 @@ requests and record an external payment reference when a payment is made. Client
 can inspect the resulting status history. A requested or approved payment has not
 been sent, and a recorded paid status does not independently verify a bank transfer.
 
-### MetaTrader account synchronization
-
-The MetaTrader connections section uses the official MetaApi SDK to read existing
-MetaTrader 4/5 accounts. Configure `METAAPI_API_TOKEN` privately on the application
-server, create and deploy the account through MetaApi under the prop firm's
-permitted arrangements, then link its MetaApi account ID to an academy sponsored
-record backed by the current approved review. No broker password or API token is
-entered into the website's connection form. This connector does not provision or
-deploy a prop account, place trades, purchase accounts, or transfer money.
-
-Choose the history start at assignment; the default is the previous 30 days.
-An external account and history start stay bound to that sponsored record, so
-history cannot be reassigned to a different trader. The server synchronizes active
-links approximately every 60 seconds, within bounded jobs and provider limits.
-Manual sync is also available. The interface distinguishes last successful sync,
-stale data, unavailable configuration, and incomplete history. Deal IDs and
-correction history prevent duplicate imported results. Only synchronized history
-is reported; recent overlap can detect corrections, while older records outside
-that coverage still require reconciliation.
-
-Provider balances, equity, deals, fees, and cash flows keep the broker account's
-native currency. Deposits and withdrawals are not treated as trading profit.
-These read-only observations do not automatically post a profit statement, select
-a profit split, or create available payout earnings. Staff must reconcile the
-actual agreed settlement before posting to the separate USD-cent ledger. Live
-provider access requires a real configured token and authorized account; mocked
-integration tests alone do not establish that a particular prop firm permits or
-supports the connection.
-
 ### Advanced performance reports
 
 Clients use `/performance.html`; authorized admins use Performance analysis to
@@ -253,22 +224,24 @@ closing-fill counts and win rates, expectancy, profit factor, recorded drawdown,
 and profit concentration across days. Consistency measures are descriptive and do
 not introduce new qualification rules or promise future returns.
 
-Observed equity curves contain actual captured reference valuations or broker
-snapshots. Historical marked equity is not invented. A separately labeled realized
-balance curve can be reconstructed only when recorded closed assessment fills
-reconcile to the saved balance. Gaps and lines between observations do not recover
-unrecorded market moves. Sponsored reports preserve native currency and disclose
-history limits, omitted or unclassified records, fees, cash flows, and staleness.
-MetaTrader partial closes can be separate closing fills; their win rate is not a
-round-trip-position win rate. Standalone costs affect net results without being
-assigned to an invented winning or losing position.
+Observed equity curves use recorded assessment valuations and any existing
+historical observations. Historical records remain read-only and are not refreshed
+from an external trading platform. A separately labeled realized balance curve can
+be reconstructed only when recorded closed assessment fills reconcile to the saved
+balance. Gaps and lines between observations do not recover unrecorded market
+moves. Sponsored performance reports read historical account observations and
+deals already retained, with their source and currency labeled. An account with no
+recorded history has an empty or unavailable report. Financial settlement statements
+remain in Account controls and the finance screens; they do not create equity
+observations or prove a bank payment. Partial closing fills may be separate
+executions, and standalone costs are not assigned to invented positions.
 
 ### Operational health, error monitoring, and recovery
 
 Open **Admin → Operations & recovery** for an actionable health report. It flags
 unavailable database/storage checks, low disk space, old or failed backups,
-notification delivery problems, missing email/forex configuration, and stale
-active MetaApi connections. Numeric metrics show runtime memory, database/WAL
+notification delivery problems and missing email/forex configuration. Numeric
+metrics show runtime memory, database/WAL
 size, and available storage. Refresh to collect current local observations or
 download the sanitized health report for an operator review.
 
@@ -392,8 +365,8 @@ Configuration:
   share a proxy's IP rate limit. See `DEPLOYMENT.md` before enabling this setting.
 
 Deploy behind HTTPS and set `APP_ORIGIN` and `COOKIE_SECURE=true`. This is a working
-single-server development backend. Account controls, MetaApi performance reads,
-payout requests, advanced reports, and encrypted local backup/recovery checks are
+single-server development backend. Account controls, payout requests, advanced
+reports, and encrypted local backup/recovery checks are
 implemented. A finalized retention policy, offsite disaster-recovery storage, real
 provider configuration, and payment execution still need operator setup or an
 additional integration. Manual payment records do not send funds.
@@ -795,8 +768,8 @@ AI and email transports; they do not establish live provider billing or inbox re
 
 `leaderboard.html` is a public ranking of opted-in traders who signed the current
 academy contract. It compares the realized return on the reference-priced
-qualifying assessment linked to that signature. MetaApi-sponsored performance is
-available separately in private performance reports and is not used by these rankings.
+qualifying assessment linked to that signature. Recorded sponsored-account results
+are available separately in private performance reports and are not used by these rankings.
 
 A trader must have an owned reference-price certificate showing at least three
 trading days and a 10% return, a matching signature for the currently active

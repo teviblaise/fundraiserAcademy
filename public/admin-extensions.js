@@ -65,14 +65,8 @@ export function currencyAmount(value,currency){
   try{return new Intl.NumberFormat(undefined,{style:'currency',currency,maximumFractionDigits:2}).format(value);}catch{return `${value.toLocaleString()} ${currency}`;}
 }
 
-function connectionState(value){
-  const data=object(value)?value:{};
-  const link=object(data.link)?data.link:object(data.connection)?data.connection:data;
-  return {data,link,linked:typeof data.linked==='boolean'?data.linked:Boolean(link.providerAccountId)||Boolean(link.providerAccountIdMasked)||Boolean(link.connected===true)||Boolean(link.linked===true),revision:link.revision??data.revision};
-}
-
 export function createAdminExtensions(ctx){
-  const {api,post,can,node,card,table,detailGrid,button,openAction,notify,content,isCurrent,getQuery,setQuery,reload,ensureUnlocked,date,percent}=ctx;
+  const {api,post,can,node,card,table,detailGrid,button,openAction,notify,content,isCurrent,getQuery,setQuery,reload,date,percent}=ctx;
   const append=(...items)=>content.append(...items);
   function group(...items){const element=node('div','flex flex-wrap items-center gap-3');element.append(...items);return element;}
   function note(value){return node('p','mt-4 whitespace-pre-wrap break-words text-xs text-muted',value);}
@@ -99,37 +93,6 @@ export function createAdminExtensions(ctx){
     form.addEventListener('submit',event=>{event.preventDefault();if(!form.reportValidity())return;try{submit(Object.fromEntries(new FormData(form)));}catch(error){notify(error.message,true);}});
     return form;
   }
-  function linkAction(account){
-    const current=connectionState(account.connection);
-    return openAction({title:'Link an existing MetaApi account',description:'Assign an existing MetaTrader account already connected in your company MetaApi workspace. The server token stays in hosting settings. This does not buy, provision, or trade a prop account.',fields:[{name:'providerAccountId',label:'Existing MetaApi account ID',maxLength:100,value:current.link.providerAccountId||'',help:'Use the MetaApi account identifier, not a MetaTrader password or API token.'},{name:'historyFrom',label:'History start (UTC date)',type:'date',required:false,help:'Leave blank to use the connector’s documented bounded history window.'},reasonField],submit:'Link sponsored account',execute:form=>post(`/api/admin/connections/${account.id}/link`,{providerAccountId:text(form.get('providerAccountId')).trim(),historyFrom:form.get('historyFrom')||undefined,...(Number.isSafeInteger(current.revision)?{expectedRevision:current.revision}:{}),reason:form.get('reason')})});
-  }
-  function unlinkAction(account){
-    const current=connectionState(account.connection);
-    if(!Number.isSafeInteger(current.revision)){notify('The connection revision is unavailable. Refresh before changing it.');return;}
-    return openAction({title:'Disconnect sponsored-account synchronization',description:'Stop new synchronization for this assignment. Recorded performance and financial records are preserved. A provider account cannot be reassigned to a different trader.',fields:[reasonField],submit:'Disconnect performance feed',execute:form=>post(`/api/admin/connections/${account.id}/unlink`,{revision:current.revision,reason:form.get('reason')})});
-  }
-  async function synchronize(account,trigger){
-    if(trigger.disabled)return;trigger.disabled=true;
-    try{await ensureUnlocked();await post(`/api/admin/connections/${account.id}/sync`,{});notify('The server completed the performance synchronization request. Check the latest observation and coverage below.');await reload();}
-    catch(error){notify(error.message||'Performance synchronization could not finish.');}
-    finally{trigger.disabled=false;}
-  }
-  async function connections(epoch){
-    const query=getQuery();const data=await api('/api/admin/connections'+queryString({limit:25,offset:query.offset||0,search:query.search||''}));if(!isCurrent(epoch))return;
-    const page=pageRows(data,'accounts'),area=card('MetaTrader performance connections','Link company-sponsored allocations to existing MetaApi accounts. Provider observations stay separate from the profit-share and payment ledger.');
-    area.append(detailGrid([['Provider','MetaApi · MetaTrader 4/5'],['Configuration',data.provider?.configured?'Server token configured':'Server token not configured'],['Automatic synchronization',data.provider?.automaticSync?'Scheduled':'Not running'],['Accounts synchronizing',count(data.provider?.synchronizing)]]));
-    if(!data.provider?.configured)area.append(note('Enter METAAPI_API_TOKEN securely in the application server settings before live synchronization. This page never collects provider passwords or tokens.'));
-    area.append(filters([{name:'search',label:'Find account or trader'}],query,values=>{setQuery({...values,offset:0});reload();}));
-    area.append(table([
-      {title:'Trader / allocation',value:row=>`${row.traderName||'Client #'+row.userId} · ${row.label||row.id}`},
-      {title:'Firm',value:row=>row.firmName},
-      {title:'Connection',value:row=>{const state=connectionState(row.connection);return stateLabel(state.link.status||state.data.status||(state.linked?'linked':'not_linked'))+(state.data.stale&&state.linked?' · stale observations':'');}},
-      {title:'Last successful sync',value:row=>{const state=connectionState(row.connection);return date(state.link.lastSuccessAt??state.link.lastSyncedAt??state.data.lastSuccessAt);}},
-      {title:'Latest observation',value:row=>{const state=connectionState(row.connection),sample=state.data.latestSnapshot||state.data.latest||state.data.snapshot;return object(sample)?`${currencyAmount(sample.equity,sample.currency)} equity${state.data.stale?' · stale':''}`:'No observation recorded';}},
-      {title:'Actions',value:row=>{const state=connectionState(row.connection);const actions=group();if(can('finance.write')){if(!state.linked)actions.append(button('Link MetaApi account',()=>linkAction(row)));else if(state.link.active===false)actions.append(button('Reconnect existing account',()=>linkAction(row)));else{const sync=button('Synchronize now',()=>synchronize(row,sync));actions.append(sync,button('Disconnect',()=>unlinkAction(row)));}}return actions;}}
-    ],page.items),navigation(page));
-    area.append(note('MetaApi observations can include balance deposits or withdrawals. They do not automatically become distributable profit, change the signed split, approve payouts, or send money. Review imported history coverage and recorded statements before settlement.'));append(area);
-  }
   function lineChart(curve,key,title,currency){
     const area=card(title,'Only recorded observations are plotted. Lines connect samples; values between samples were not measured.');
     const points=rows(curve?.points).filter(point=>finite(point?.time)&&finite(point?.[key]));
@@ -141,13 +104,13 @@ export function createAdminExtensions(ctx){
     if(curve.downsampled)area.append(note('The display keeps a bounded selection of actual samples. Drawdown statistics use the report’s underlying recorded observations.'));return area;
   }
   async function performance(epoch){
-    const query=getQuery(),area=card('Advanced performance report','Choose the trader and source. Assessment demo results and sponsored provider-account results are reported separately in their recorded currency.');
-    area.append(filters([{name:'userId',label:'Trader client ID',type:'number',min:1,required:true},{name:'source',label:'Report source',choices:[['assessment','Assessment demo'],['sponsored','Sponsored MetaApi account']]},{name:'accountId',label:'Sponsored account ID (sponsored source)'},{name:'from',label:'From (UTC)',type:'date'},{name:'to',label:'Through (UTC)',type:'date'}],query,values=>{setQuery(performanceFilters(values));reload();}));append(area);
+    const query=getQuery(),area=card('Advanced performance report','Choose the trader and source. Assessment demo results and recorded sponsored-account results are reported separately in their recorded currency.');
+    area.append(filters([{name:'userId',label:'Trader client ID',type:'number',min:1,required:true},{name:'source',label:'Report source',choices:[['assessment','Assessment demo'],['sponsored','Sponsored account records']]},{name:'accountId',label:'Sponsored account ID (sponsored source)'},{name:'from',label:'From (UTC)',type:'date'},{name:'to',label:'Through (UTC)',type:'date'}],query,values=>{setQuery(performanceFilters(values));reload();}));append(area);
     if(!query.userId){area.append(note('Enter a trader client ID to load recorded results. No example performance is shown.'));return;}
     const selected=performanceFilters(query);const report=await api('/api/admin/performance'+queryString(selected));if(!isCurrent(epoch))return;
     const summary=report.summary||{},currency=report.account?.currency;
     area.append(detailGrid([['Account',report.account?.label||report.account?.id||'Assessment'],['Currency',currency||'Not recorded'],['Recorded net result',currencyAmount(summary.netProfit,currency)],['Closing fills',count(summary.closedTradeCount)],['Closing fill win rate',percent(summary.winRate)],['Expectancy per closing fill',currencyAmount(summary.expectancy,currency)],['Profit factor',finite(summary.profitFactor)?String(summary.profitFactor):stateLabel(summary.profitFactorStatus)],['Observed equity drawdown',currencyAmount(report.drawdown?.observedEquity?.maxAmount,currency)],['Realized balance drawdown',currencyAmount(report.drawdown?.realizedBalance?.maxAmount,currency)]]));
-    const coverage=report.coverage||{};area.append(note([text(coverage.notice),text(coverage.closedFillUnit),text(coverage.explanation),...rows(coverage.warnings).map(text),coverage.historyComplete===false||coverage.complete===false||coverage.status==='partial'?'The imported history is incomplete. Statistics cover the recorded subset.':'',text(report.consistency?.explanation)].filter(Boolean).join(' ')));
+    const coverage=report.coverage||{};area.append(note([text(coverage.notice),text(coverage.closedFillUnit),text(coverage.explanation),...rows(coverage.warnings).map(text),coverage.historyComplete===false||coverage.complete===false||coverage.status==='partial'?'The recorded history is incomplete. Statistics cover the available subset.':'',text(report.consistency?.explanation)].filter(Boolean).join(' ')));
     const charts=node('div','grid min-w-0 gap-6 xl:grid-cols-2');charts.append(lineChart(report.equityCurve,'equity','Observed equity',currency),lineChart(report.balanceCurve,'balance',report.balanceCurve?.kind==='realized_balance'?'Realized balance':'Observed balance',currency));append(charts);
     const monthly=card('Monthly results','UTC months from recorded closing fills and trading costs. Deposits and withdrawals are shown as cash flows, not trading profit.');monthly.append(table([{title:'UTC month',value:item=>item.month},{title:'Net trading result',value:item=>currencyAmount(item.netProfit,currency)},{title:'Cash flows',value:item=>currencyAmount(item.cashFlows,currency)},{title:'Closing fills',value:item=>count(item.closedTradeCount)},{title:'Fill win rate',value:item=>percent(item.winRate)}],rows(report.monthly)));append(monthly);
     const consistency=report.consistency||{},analysis=card('Consistency analysis','Descriptive concentration measures do not introduce a new qualification rule.');analysis.append(detailGrid([['Positive days',count(consistency.positiveDays)],['Negative days',count(consistency.negativeDays)],['Flat days',count(consistency.flatDays)],['Best day',consistency.bestDay||'Not recorded'],['Best day’s share of positive profit',percent(consistency.bestDayShareOfPositiveProfitPercent)],['Largest winning fill concentration',percent(consistency.largestWinningFillSharePercent)]]));append(analysis);
@@ -227,5 +190,5 @@ export function createAdminExtensions(ctx){
       return button('Complete requested deletion',()=>openAction({title:'Complete a customer’s deletion request',description:`Client #${item.userId} already requested account closure. This signs out the customer, removes mutable operational personal data, and retains the categories disclosed in their receipt. This action cannot be undone from the website.`,fields:[reasonField],submit:'Complete requested account deletion',execute:form=>post(`/api/admin/privacy/${positiveInteger(item.userId,'client ID')}/complete`,{reason:form.get('reason')})}));
     }}],page.items),navigation(page));append(area);
   }
-  return {connections,performance,operations,privacy};
+  return {performance,operations,privacy};
 }

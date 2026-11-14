@@ -12,7 +12,6 @@ import {createAdminAccess} from '../admin-access.mjs';
 import {createAdminWorkflows} from '../admin-workflows.mjs';
 import {createAdminFinance} from '../admin-finance.mjs';
 import {createPerformanceReports} from '../performance-reports.mjs';
-import {createSponsoredSync} from '../sponsored-sync.mjs';
 import {createAccountControls,applyAccountDeletionLedger} from '../account-controls.mjs';
 import {createAccount} from '../public/simulator.js';
 import {installProvidedAgreement} from '../agreement.mjs';
@@ -307,12 +306,21 @@ test('closure is atomic with caller security transactions, failed revocation, an
  }finally{app.close();}
 });
 
-test('provider performance is exported only for its owner and closure removes observations while disabling the permanent binding',async()=>{
- const app=fixture();let sync;
+test('historical account observations remain owner-bound and closure erases mutable history without rewriting retained ownership records',()=>{
+ const app=fixture();
  try{
   const allocation=app.allocation();
-  sync=createSponsoredSync(app.db,{access:app.access,workflows:{requireApproved(){return {...app.approval};}},now:()=>time,apiToken:'',provider:{async fetch(){return{accountInformation:{currency:'USD',balance:10098,equity:10095},complete:true,deals:[{id:'fixture-deal',time:time-3600000,type:'DEAL_TYPE_BUY',entryType:'DEAL_ENTRY_OUT',profit:100,commission:-2,comment:'private-provider-comment',brokerPassword:'private-broker-password'}]};}}});
-  sync.linkAccount(1,allocation.id,{providerAccountId:'private-external-account-0001',reason:'Connect isolated provider fixture'});await sync.syncAccount(1,allocation.id);
+  // Simulate an existing installation's stored history. The application no
+  // longer creates these tables or connects an external account.
+  app.db.exec(`CREATE TABLE sponsored_sync_links(account_id TEXT PRIMARY KEY,provider_account_id TEXT,provider_id_hash TEXT,active INTEGER,revision INTEGER,history_from INTEGER,linked_at INTEGER,updated_at INTEGER,last_attempt_at INTEGER,last_success_at INTEGER,history_through INTEGER,history_complete INTEGER,currency TEXT,error_code TEXT);
+   CREATE TABLE sponsored_sync_snapshots(id INTEGER PRIMARY KEY,account_id TEXT,at INTEGER,currency TEXT,balance REAL,equity REAL);
+   CREATE TABLE sponsored_sync_deals(account_id TEXT,id TEXT,time INTEGER,currency TEXT,type TEXT,entry_type TEXT,classification TEXT,profit REAL,commission REAL,swap REAL,fee REAL,net_profit REAL,cash_flow REAL,is_closing INTEGER,revision INTEGER,updated_at INTEGER,PRIMARY KEY(account_id,id));
+   CREATE TABLE sponsored_sync_deal_versions(id INTEGER PRIMARY KEY,account_id TEXT,deal_id TEXT,revision INTEGER,payload TEXT,recorded_at INTEGER);
+   CREATE TRIGGER historical_ownership_retained BEFORE DELETE ON sponsored_sync_links BEGIN SELECT RAISE(ABORT,'Historical ownership records cannot be deleted'); END;`);
+  app.db.prepare('INSERT INTO sponsored_sync_links VALUES (?,?,?,1,1,?,?,?,?,?,?,1,?,NULL)').run(allocation.id,'private-external-account-0001',hash('private-external-account-0001'),time-86400000,time,time,time,time,time,'USD');
+  app.db.prepare('INSERT INTO sponsored_sync_snapshots VALUES (1,?,?,?,?,?)').run(allocation.id,time,'USD',10098,10095);
+  app.db.prepare("INSERT INTO sponsored_sync_deals VALUES (?,'fixture-deal',?,'USD','DEAL_TYPE_BUY','DEAL_ENTRY_OUT','trade',100,-2,0,0,98,0,1,1,?)").run(allocation.id,time-3600000,time);
+  app.db.prepare("INSERT INTO sponsored_sync_deal_versions VALUES (1,?,'fixture-deal',1,?,?)").run(allocation.id,JSON.stringify({netProfit:98}),time);
   const exported=app.controls.exportData(2),other=app.controls.exportData(3),serialized=JSON.stringify(exported);
   assert.equal(exported.sections.sponsoredConnections.items.length,1);assert.equal(exported.sections.sponsoredEquityObservations.items[0].equity,10095);assert.equal(exported.sections.sponsoredDeals.items[0].netProfit,98);assert.equal(exported.sections.sponsoredDealHistory.items[0].payload.netProfit,98);
   assert.equal(other.sections.sponsoredDeals.items.length,0);for(const privateValue of ['private-external-account-0001','provider_id_hash','private-provider-comment','private-broker-password'])assert.ok(!serialized.includes(privateValue),privateValue);
@@ -321,7 +329,7 @@ test('provider performance is exported only for its owner and closure removes ob
   const binding=app.db.prepare('SELECT active,provider_account_id,provider_id_hash FROM sponsored_sync_links WHERE account_id=?').get(allocation.id);assert.equal(binding.active,0);assert.equal(binding.provider_account_id,null);assert.equal(binding.provider_id_hash,hash('private-external-account-0001'));
   for(const table of ['sponsored_sync_snapshots','sponsored_sync_deals','sponsored_sync_deal_versions'])assert.equal(app.db.prepare(`SELECT count(*) n FROM ${table} WHERE account_id=?`).get(allocation.id).n,0,table);
   assert.throws(()=>app.db.exec('DELETE FROM sponsored_sync_links'),/cannot be deleted/);assert.equal(app.db.prepare('PRAGMA foreign_key_check').all().length,0);
- }finally{await sync?.close();app.close();}
+ }finally{app.close();}
 });
 
 test('recovery replays the latest deletion ledger into an older database, reserves missing user IDs, and rejects another installation',()=>{

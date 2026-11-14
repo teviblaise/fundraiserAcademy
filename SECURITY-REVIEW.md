@@ -19,20 +19,19 @@ This is not a complete penetration test of Render's managed infrastructure.
 Push destinations remain restricted to supported HTTPS push providers. Persisted
 subscriptions are validated again immediately before sending. No attacker-controlled
 SSRF destination or TLS-verification bypass was identified in the inspected paths.
-Market and support integrations use fixed provider destinations; MetaApi uses
-validated account IDs and the official read-only adapter.
+Market and support integrations use fixed provider destinations. Sponsored-account
+records and external payments are maintained as manual, audited records.
 
-Both production and full dependency audits found **zero critical, high, or
-moderate advisories**. One low advisory,
-[GHSA-848j-6mx2-7j84](https://github.com/advisories/GHSA-848j-6mx2-7j84), appears
-as five affected package entries through MetaApi's browser crypto dependencies.
-The actual unbundled server SDK import did not load those affected modules; no
-reachable exploitation path was demonstrated. The advisory remains in the lockfile.
-No forced or unsupported dependency upgrade was applied.
+Dependency review refreshed on 14 November 2026: after removing the optional
+external-account connector and its unused dependency tree, both
+`npm audit --omit=dev` and `npm audit` reported **zero known advisories** across
+all severity levels. This describes the reviewed lockfile and registry results,
+and does not establish that the entire application is vulnerability-free.
+Recheck advisories when dependencies change and assess their reachable use.
 
 ## Checks and remaining operator work
 
-- Anonymous private profile, admin connections, contract, and export API requests
+- Anonymous private profile, administrative, contract, and export API requests
   returned 401. Cross-origin preflight did not grant CORS access.
 - `.env`, SQLite database, backup-directory, and Git configuration URLs returned
   404. Static paths also have traversal and symlink checks in the server.
@@ -53,6 +52,6 @@ No forced or unsupported dependency upgrade was applied.
 
 The review did not authenticate to Render's private control plane, scan shared
 hosting ports, perform load/denial-of-service tests against the public service,
-or validate MetaTrader provider credentials. TLS termination and host/firewall
+or access private trading-provider credentials. TLS termination and host/firewall
 configuration remain within the hosting operator's scope. The HTTP-to-HTTPS
 redirect check was inconclusive because the execution network closed that request.
